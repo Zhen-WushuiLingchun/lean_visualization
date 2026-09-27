@@ -118,6 +118,16 @@ Views:
   into statement/proof, transitive axioms, taints, and the verification table (one row per checker with
   status, time, and a log toggle). Buttons: `Verify (kernel)` = L1 only, `Verify (all checkers)` = L1+L2,
   `Verify cone` = topological order over the displayed cone with cached results reused.
+- **Verify all (toolbar, server mode).** Queues every real declaration in the loaded graph file,
+  including auxiliary and external declarations regardless of display filters. Options limit the
+  queue to local declarations or request kernel-only checking; the default requests all available
+  checkers. Uses a rolling window of 2 in-flight declarations by default (selectable 1, 2, or 4)
+  through the existing per-declaration API. The server still limits execution to 2 jobs by default;
+  a larger browser window can queue requests but does not raise the server's limit. Each request lets the server
+  validate cache bindings; browser badges never skip a request. Progress distinguishes accepted,
+  rejected, errors and incomplete results. Stop prevents further submissions and waits for already
+  submitted jobs to finish. Keep the page open while running; restarting submits the scope again and the server can
+  reuse valid cached results. Full closure exports still take time and disk space on large projects.
 - **Filters.** Edge site (statement / proof / both), hide aux, hide external, taint filter, kind filter,
   depth limit from targets.
 - **Export.** Download the displayed cone as JSON and PNG (xyflow's `toPng` via `html-to-image` is not

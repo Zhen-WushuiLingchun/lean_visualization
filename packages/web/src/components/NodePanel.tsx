@@ -319,7 +319,7 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
           <input type="checkbox" checked={reuse} onChange={(e) => setReuse(e.target.checked)} disabled={!!disabledReason} /> reuse cached results
         </label>
       </div>
-      {coneRun && (
+      {coneRun?.scope === "cone" && (
         <p className="pf-note">
           Cone run: {coneRun.done} of {coneRun.total} done, {coneRun.reused} from cache, {coneRun.outcomes.ok} accepted, {coneRun.outcomes.rejected} rejected,{" "}
           {coneRun.outcomes.error} errors, {coneRun.outcomes.dash} incomplete.
@@ -329,12 +329,12 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
               Now: <code>{coneRun.current}</code>.
             </>
           )}
-          {coneRun.cancelled && " Stopped."}
-          {coneBusy && (
+          {coneRun.cancelled && (coneRun.finished ? " Stopped." : " Stop requested.")}
+          {coneBusy && !coneRun.cancelled && (
             <>
               {" "}
               <button type="button" className="pf-link" onClick={() => verify.cancelCone()}>
-                Stop
+                Stop after current
               </button>
             </>
           )}

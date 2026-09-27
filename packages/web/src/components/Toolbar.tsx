@@ -6,7 +6,7 @@ import { ELK_AUTO_LIMIT, engineLabel, type LayoutChoice, type LayoutEngine } fro
 import { fuzzySearch } from "../graph/search";
 import { TAINT_INFO } from "../graph/trust";
 import { useApp } from "../state/appState";
-import { useConeRun } from "../state/verifyStore";
+import { VerifyAll } from "./VerifyAll";
 
 function TargetSearch({ inputRef, visibleIds }: { inputRef: RefObject<HTMLInputElement | null>; visibleIds?: ReadonlyMap<string, unknown> }) {
   const { index, dispatch, state } = useApp();
@@ -199,8 +199,7 @@ export interface ToolbarProps {
 }
 
 export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSvg, onFit, visibleIds }: ToolbarProps) {
-  const { state, dispatch, serverMode, verify } = useApp();
-  const coneRun = useConeRun(verify);
+  const { state, dispatch, serverMode } = useApp();
   const o = state.options;
   const set = (patch: Partial<typeof o>): void => dispatch({ type: "setOptions", patch });
   const [depthText, setDepthText] = useState(o.depthLimit === null ? "" : String(o.depthLimit));
@@ -301,14 +300,7 @@ export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSv
         </details>
       </div>
       <span className="pf-spacer" />
-      {coneRun && !coneRun.finished && (
-        <span className="pf-status is-busy">
-          Verifying cone {coneRun.done}/{coneRun.total}{" "}
-          <button type="button" className="pf-link" onClick={() => verify.cancelCone()}>
-            Stop
-          </button>
-        </span>
-      )}
+      <VerifyAll />
       <span className={`pf-status${layout.phase === "running" ? " is-busy" : ""}`} role="status" aria-live="polite">
         {status}
       </span>

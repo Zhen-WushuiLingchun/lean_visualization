@@ -35,10 +35,14 @@ export interface DeclVerify {
 }
 
 export interface ConeRun {
+  scope: "cone" | "all" | "local";
   total: number;
   done: number;
   reused: number;
   current: string | null;
+  /** Declarations occupying batch slots; an existing per-node request may occupy a slot while it finishes. */
+  active: string[];
+  maxInFlight?: number;
   checkers: CheckerRequest;
   finished: boolean;
   cancelled: boolean;
@@ -165,6 +169,8 @@ export class VerifyStore {
   }
 
   reset(): void {
+    if (this.liveRun) this.liveRun.cancelled = true;
+    this.liveRun = null;
     this.states.clear();
     this.queue = [];
     this.coneRun = null;
@@ -288,16 +294,81 @@ export class VerifyStore {
   // ---- cone runs ------------------------------------------------------------------------------
 
   /**
+   * Submit every real declaration to the server through a bounded rolling window. Only the server can validate cached
+   * export/toolchain/binary bindings; a previously green browser badge is never a reason to skip.
+   * Each export includes its closure, so file order is sufficient and needs no full-graph walk.
+   */
+  async runAll(decls: readonly string[], checkers: CheckerRequest, scope: "all" | "local" = "all", maxInFlight = 2): Promise<ConeRun | null> {
+    if (!this.enabled || (this.coneRun && !this.coneRun.finished) || (Array.isArray(checkers) && checkers.length === 0)) return null;
+    const ids = [...new Set(decls)];
+    const limit = Number.isFinite(maxInFlight) ? Math.max(1, Math.min(4, Math.floor(maxInFlight))) : 2;
+    const request = Array.isArray(checkers) ? [...checkers] : checkers;
+    const run: ConeRun = {
+      scope, total: ids.length, done: 0, reused: 0, current: null, active: [], maxInFlight: limit, checkers: request,
+      finished: false, cancelled: false,
+      outcomes: { none: 0, running: 0, ok: 0, rejected: 0, error: 0, dash: 0 },
+    };
+    this.liveRun = run;
+    const publish = (): void => {
+      // A reset or a new graph must not restore the old batch's progress.
+      if (this.liveRun !== run) return;
+      this.coneRun = { ...run, active: [...run.active], outcomes: { ...run.outcomes } };
+      this.emit(null);
+    };
+    publish();
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < ids.length && !run.cancelled && this.enabled && this.liveRun === run) {
+        const decl = ids[next++] as string;
+        run.active.push(decl);
+        run.current = run.active[0] ?? null;
+        publish();
+        let submitted = false;
+        try {
+          // An in-flight manual kernel-only request cannot satisfy an all-checker batch request.
+          const pending = this.pending.get(decl);
+          if (pending) await pending.catch(() => null);
+          if (run.cancelled || !this.enabled || this.liveRun !== run) continue;
+          submitted = true;
+          const result = await this.verify(decl, request);
+          let kind = result ? badgeOf(result).kind : "error";
+          if (kind === "ok" && result && !covers(result, request)) kind = "dash";
+          run.outcomes[kind]++;
+        } catch {
+          if (submitted) run.outcomes.error++;
+        } finally {
+          if (submitted) {
+            run.done++;
+            // Full logs remain on the server. Do not retain thousands of streamed logs per batch node.
+            this.patchJob(decl, { log: [] });
+          }
+          run.active.splice(run.active.indexOf(decl), 1);
+          run.current = run.active[0] ?? null;
+          publish();
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, ids.length) }, () => worker()));
+    run.finished = true;
+    run.current = null;
+    run.active = [];
+    publish();
+    return { ...run, active: [], outcomes: { ...run.outcomes } };
+  }
+
+  /**
    * Verify declarations one at a time, in the given (topological) order. With `reuseCached`, a
    * declaration whose newest cached result already covers every requested checker is skipped.
    */
   async runCone(decls: readonly string[], checkers: CheckerRequest, reuseCached = true): Promise<ConeRun | null> {
     if (!this.enabled || (this.coneRun && !this.coneRun.finished)) return null;
     const run: ConeRun = {
+      scope: "cone",
       total: decls.length,
       done: 0,
       reused: 0,
       current: null,
+      active: [],
       checkers,
       finished: false,
       cancelled: false,
@@ -337,7 +408,7 @@ export class VerifyStore {
     const live = this.liveRun;
     if (!live || live.finished) return;
     live.cancelled = true;
-    this.coneRun = { ...live };
+    this.coneRun = { ...live, active: [...live.active], outcomes: { ...live.outcomes } };
     this.emit(null);
   }
 }
