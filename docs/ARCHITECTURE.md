@@ -104,15 +104,15 @@ JSON after which the stream closes, a `: ping` comment every 15 s; a finished jo
 ## 4. Web viewer (`packages/web`)
 
 Stack: Vite, React 19, TypeScript, `@xyflow/react` (React Flow 12), `elkjs` for layered layout,
-`graphology` for in-browser graph ops on the displayed cone.
+`graphology` for dependency indexing in a worker, and compact read-only CSR adjacency for displayed cones.
 
 Views:
-- **Cone view (default).** Pick one or more target declarations (search box; defaults to the local
+- **Cone view (default for small graphs).** Pick one or more target declarations (search box; defaults to the local
   sinks, i.e. local nodes nothing local depends on). Show the backward closure within the loaded graph.
   Layout: ELK `layered`, direction `RIGHT`, with `partitioning` enabled and each node's partition equal
   to its longest-path distance from the cone's sources, so axioms sit in column 0 and targets in the last
   column regardless of ELK's own layering choices. Edges drawn source→target (dependency → dependent).
-- **Whole-project view.** Same layout over all local nodes with external nodes collapsed into one
+- **Whole-project view (default above 600 local declarations).** Same layout over all local nodes with external nodes collapsed into one
   node per external package (`Mathlib`, `Init`, …) that carries the union of their taints.
 - **Node panel.** Full statement, docstring, source snippet (fetched lazily), direct dependencies split
   into statement/proof, transitive axioms, taints, and the verification table (one row per checker with
@@ -134,8 +134,27 @@ Visual language (must be consistent, and must keep contrast in light and dark th
 | External node | muted fill, italic name, package tag |
 | Aux node | 70 % scale, hidden by default |
 
-Scale guard: if a cone exceeds 3000 nodes the viewer refuses to lay it out and asks for a depth limit
-or external collapse. Layout runs in a Web Worker (elkjs supports it) so the UI stays responsive.
+Large graphs are no longer rejected at 3000 nodes or silently narrowed to twelve final theorems.
+The main thread builds only declaration metadata; a persistent Web Worker builds dependency indexes,
+cones, layers, measurements and layout. Initialization and each request have 60-second timeouts;
+cancelled computations terminate their worker, and completed views have a two-entry worker cache.
+Large files require Worker support; unsupported environments report a visible error rather than
+attempting a blocking large computation. The small-file fallback remains available.
+
+Above 1500 displayed nodes or 10000 displayed edges, the viewer uses a Canvas overview with the same
+React Flow camera and existing node detail components. It retains every view node and edge, draws
+lightweight nodes at overview scale, names at intermediate scale, and at most 80 HTML cards at reading
+scale. A spatial grid culls offscreen nodes; a lightweight minimap retains full-project navigation.
+Default edge drawing is explicitly labelled simplified; an all-edge mode draws in cancellable frame
+batches and reports progress until complete. Selected and
+hovered incident edges bypass simplification. Full trust profiles, external boundaries, exports, and
+the dependency closures used by verification are independent of the drawing budget. No graph schema,
+server verification or checker behavior changes are involved.
+
+Project-mode search locates a visible declaration without rebuilding the map. Shift+Enter or a hidden
+declaration opens its cone. To show every declaration already present in the file, disable Hide aux
+and choose External: Expand. This cannot expand dependencies that the extractor never emitted.
+See `docs/PERFORMANCE.md` for measured scope and resource limitations.
 
 ## 5. Schema (`packages/schema`)
 

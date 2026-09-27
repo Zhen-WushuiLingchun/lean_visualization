@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { hasCycle } from "graphology-dag";
 import { buildCone } from "../src/graph/cone";
 import { buildIndex } from "../src/graph/graphIndex";
 import { assignLayers } from "../src/graph/layers";
@@ -14,7 +13,6 @@ describe("assignLayers", () => {
   ]) {
     it(`puts axioms first, sinks last and edges left to right (${variant.external}, aux ${variant.hideAux ? "hidden" : "shown"})`, () => {
       const cone = buildCone(idx, { mode: "cone", targets: idx.localSinks, depthLimit: null, site: "all", ...variant });
-      expect(hasCycle(cone.view)).toBe(false);
       const L = assignLayers(
         cone.nodes.map((n) => n.id),
         cone.edges,

@@ -87,9 +87,9 @@ export type Action =
       source: GraphSource;
       label: string;
       defaultTargets: string[];
-      /** Targets to start with (the first few final theorems when all of them are too many). */
       initialTargets: string[];
       narrowed: Narrowed | null;
+      initialMode?: ViewMode;
     }
   | { type: "landing"; error: string | null }
   | { type: "unload" }
@@ -127,6 +127,7 @@ export function reducer(state: AppState, action: Action): AppState {
         sourceLabel: action.label,
         defaultTargets: action.defaultTargets,
         narrowed: action.narrowed,
+        mode: action.initialMode ?? "cone",
         targets: action.initialTargets,
       };
     case "landing":

@@ -1,6 +1,6 @@
-import Graph from "graphology";
 import { TAINT_SEVERITY, type Node, type Taint } from "@proofflow/schema";
 import type { GraphIndex, ViewSite } from "./graphIndex";
+import { CsrConeAdjacency, type ConeAdjacency } from "./adjacency";
 
 /**
  * The displayed cone: backward closure from the selected targets, restricted to the loaded graph,
@@ -23,7 +23,6 @@ export interface ConeOptions {
   site: SiteFilter;
 }
 
-export const SCALE_LIMIT = 3000;
 export const PACKAGE_PREFIX = "external:";
 
 export interface ViewNode {
@@ -63,8 +62,8 @@ export interface Cone {
   /** Every declaration in the closure, including hidden and collapsed ones. */
   closureIds: string[];
   missingTargets: string[];
-  /** View graph over `nodes`/`edges` (graphology), for highlight and ordering. */
-  view: Graph<Record<string, never>, { site: ViewSite }>;
+  /** Read-only adjacency over displayed nodes and edges, for highlight and ordering. */
+  view: ConeAdjacency;
   counts: {
     /** Declarations in the closure before hiding and collapsing. */
     closure: number;
@@ -95,6 +94,7 @@ function sortTaints(set: Set<Taint>): Taint[] {
 }
 
 export function buildCone(index: GraphIndex, opts: ConeOptions): Cone {
+  if (!index.dependenciesLoaded) throw new Error("Dependency graph is available only in the view worker");
   const { byId, graph } = index;
 
   // 1. Seeds and targets.
@@ -298,16 +298,14 @@ export function buildCone(index: GraphIndex, opts: ConeOptions): Cone {
   nodes.sort((a, b) => (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0));
 
   const byIdView = new Map(nodes.map((n) => [n.id, n]));
-  const view: Cone["view"] = new Graph({ type: "directed", multi: false, allowSelfLoops: false });
-  for (const n of nodes) view.addNode(n.id);
   const edges: ViewEdge[] = [];
   for (const [key, acc] of edgeAcc) {
     const [s, t] = key.split("\u0000") as [string, string];
     if (!byIdView.has(s) || !byIdView.has(t)) continue;
     const id = `e${edges.length}`;
     edges.push({ id, source: s, target: t, site: acc.site, folded: acc.folded });
-    view.addEdgeWithKey(id, s, t, { site: acc.site });
   }
+  const view = new CsrConeAdjacency(nodes.map((n) => n.id), edges);
 
   return {
     nodes,

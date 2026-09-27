@@ -8,8 +8,8 @@ import { TAINT_INFO } from "../graph/trust";
 import { useApp } from "../state/appState";
 import { useConeRun } from "../state/verifyStore";
 
-function TargetSearch({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }) {
-  const { index, dispatch } = useApp();
+function TargetSearch({ inputRef, visibleIds }: { inputRef: RefObject<HTMLInputElement | null>; visibleIds?: ReadonlyMap<string, unknown> }) {
+  const { index, dispatch, state } = useApp();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -18,7 +18,10 @@ function TargetSearch({ inputRef }: { inputRef: RefObject<HTMLInputElement | nul
   const hits = useMemo(() => (index && deferred.trim() ? fuzzySearch(deferred, index.searchIds, 40) : []), [index, deferred]);
 
   const choose = (id: string, sole: boolean): void => {
-    dispatch(sole ? { type: "setTargets", targets: [id] } : { type: "addTarget", id });
+    // Project search locates a visible declaration without rebuilding or narrowing the map.
+    // A hidden declaration still opens its full cone so it can be inspected normally.
+    if (sole || (state.mode === "project" && !visibleIds?.has(id))) dispatch({ type: "setTargets", targets: [id] });
+    else if (state.mode !== "project") dispatch({ type: "addTarget", id });
     dispatch({ type: "select", id });
     setQuery("");
     setOpen(false);
@@ -50,7 +53,7 @@ function TargetSearch({ inputRef }: { inputRef: RefObject<HTMLInputElement | nul
         ref={inputRef}
         type="search"
         placeholder="Search declarations ( / )"
-        aria-label="Search declarations to add as targets"
+        aria-label={state.mode === "project" ? "Search declarations to locate" : "Search declarations to add as targets"}
         role="combobox"
         aria-expanded={open && hits.length > 0}
         aria-controls={listId}
@@ -79,7 +82,7 @@ function TargetSearch({ inputRef }: { inputRef: RefObject<HTMLInputElement | nul
                   choose(h.id, e.shiftKey || e.ctrlKey || e.metaKey);
                 }}
                 onMouseEnter={() => setActive(i)}
-                title="Click adds a target. Shift-click shows only this one."
+                title={state.mode === "project" ? "Click locates this declaration. Shift-click shows its cone." : "Click adds a target. Shift-click shows only this one."}
               >
                 <span className="pf-dot" data-kind={n ? kindColorKey(n) : "package"} />
                 <span className="pf-search__id">{h.id}</span>
@@ -88,7 +91,7 @@ function TargetSearch({ inputRef }: { inputRef: RefObject<HTMLInputElement | nul
             );
           })}
           <li className="pf-muted pf-small" aria-disabled="true" style={{ cursor: "default" }}>
-            Enter adds a target. Shift+Enter shows only this one.
+            {state.mode === "project" ? "Enter locates a declaration. Shift+Enter shows its cone." : "Enter adds a target. Shift+Enter shows only this one."}
           </li>
         </ul>
       )}
@@ -177,7 +180,7 @@ function FilterPopover() {
 }
 
 export interface LayoutStatus {
-  phase: "idle" | "running" | "done" | "error" | "guard" | "empty";
+  phase: "idle" | "running" | "done" | "error" | "empty";
   nodes: number;
   /** Engine that ran (done) or will run (running: "elk" or "fast"). */
   engine?: LayoutEngine | "elk";
@@ -186,6 +189,7 @@ export interface LayoutStatus {
 }
 
 export interface ToolbarProps {
+  visibleIds?: ReadonlyMap<string, unknown>;
   searchRef: RefObject<HTMLInputElement | null>;
   layout: LayoutStatus;
   canExport: boolean;
@@ -194,7 +198,7 @@ export interface ToolbarProps {
   onFit(): void;
 }
 
-export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSvg, onFit }: ToolbarProps) {
+export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSvg, onFit, visibleIds }: ToolbarProps) {
   const { state, dispatch, serverMode, verify } = useApp();
   const coneRun = useConeRun(verify);
   const o = state.options;
@@ -210,9 +214,7 @@ export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSv
       ? `Layouting ${layout.nodes} nodes (${layout.engine === "fast" ? "fast layout" : "ELK"})...`
       : layout.phase === "done"
         ? `${layout.nodes} nodes, ${layout.engine && layout.engine !== "elk" ? engineLabel(layout.engine) : "layout"} ${((layout.ms ?? 0) / 1000).toFixed(2)} s`
-        : layout.phase === "guard"
-          ? `${layout.nodes} nodes: too many to lay out`
-          : layout.phase === "error"
+        : layout.phase === "error"
             ? `Layout failed: ${layout.error ?? ""}`
             : layout.phase === "empty"
               ? "Nothing to show"
@@ -226,7 +228,7 @@ export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSv
           {state.graph?.meta.project.name} {serverMode ? "(server)" : state.source === "sample" ? "(sample, standalone)" : "(file, standalone)"}
         </small>
       </span>
-      <TargetSearch inputRef={searchRef} />
+      <TargetSearch inputRef={searchRef} visibleIds={visibleIds} />
       <Targets />
       <div className="pf-group pf-seg" role="group" aria-label="View mode">
         <button type="button" aria-pressed={state.mode === "cone"} onClick={() => dispatch({ type: "setMode", mode: "cone" })} title="Backward closure of the targets">

@@ -21,6 +21,8 @@ export interface GraphIndex {
   order: Map<string, number>;
   /** Whole-file dependency graph, edges dependency → dependent. */
   graph: DepGraph;
+  /** False for the main-thread metadata index; dependency traversal must run in the worker. */
+  dependenciesLoaded: boolean;
   /** Axiom ids that appear in a trust profile but have no node in graph.json. */
   synthetic: Set<string>;
   /** Edges into axiom nodes, dropped because the contract says axioms have no incoming edges. */
@@ -75,7 +77,7 @@ function syntheticAxiom(id: string): Node {
   };
 }
 
-export function buildIndex(file: GraphFile): GraphIndex {
+export function buildIndex(file: GraphFile, options: { metadataOnly?: boolean } = {}): GraphIndex {
   const byId = new Map<string, Node>();
   const order = new Map<string, number>();
   file.nodes.forEach((n, i) => {
@@ -97,28 +99,30 @@ export function buildIndex(file: GraphFile): GraphIndex {
   }
 
   const graph: DepGraph = new Graph({ type: "directed", multi: false, allowSelfLoops: false });
-  for (const id of byId.keys()) graph.addNode(id);
   let droppedAxiomInEdges = 0;
-  for (const e of edgesOf({ nodes: [...byId.values()] })) {
-    if (e.source === e.target) continue;
-    const target = byId.get(e.target);
-    if (target?.kind === "axiom") {
-      droppedAxiomInEdges++;
-      continue;
+  if (!options.metadataOnly) {
+    for (const id of byId.keys()) graph.addNode(id);
+    for (const e of edgesOf({ nodes: [...byId.values()] })) {
+      if (e.source === e.target) continue;
+      const target = byId.get(e.target);
+      if (target?.kind === "axiom") {
+        droppedAxiomInEdges++;
+        continue;
+      }
+      if (!graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { site: e.site });
     }
-    if (!graph.hasEdge(e.source, e.target)) graph.addEdge(e.source, e.target, { site: e.site });
-  }
-  for (const n of file.nodes) {
-    if (n.depsComplete || n.kind === "axiom") continue;
-    for (const a of n.axioms) {
-      if (a !== n.id && byId.has(a) && !graph.hasEdge(a, n.id)) graph.addEdge(a, n.id, { site: "axiom" });
+    for (const n of file.nodes) {
+      if (n.depsComplete || n.kind === "axiom") continue;
+      for (const a of n.axioms) {
+        if (a !== n.id && byId.has(a) && !graph.hasEdge(a, n.id)) graph.addEdge(a, n.id, { site: "axiom" });
+      }
     }
   }
 
   const localIds = file.nodes.filter((n) => n.isLocal).map((n) => n.id);
   const localSinks = localSinksOf(file);
   const searchIds = [...localIds, ...[...byId.keys()].filter((id) => !byId.get(id)?.isLocal)];
-  return { file, byId, order, graph, synthetic, droppedAxiomInEdges, localSinks, localIds, searchIds };
+  return { file, byId, order, graph, dependenciesLoaded: !options.metadataOnly, synthetic, droppedAxiomInEdges, localSinks, localIds, searchIds };
 }
 
 /**

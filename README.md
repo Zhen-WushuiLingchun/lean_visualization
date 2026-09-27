@@ -49,6 +49,21 @@ pnpm proofflow serve   --project path/to/lean/project --open
 Try it on the bundled example: `pnpm proofflow serve --project examples/toy --open`.
 `examples/mathlib-demo` is a small project over Mathlib (run `lake exe cache get` inside it first).
 
+## Large projects
+
+Large projects open in **Whole project** mode. The viewer retains every declaration in the loaded
+file; the default **Hide aux** and **External: Collapse** controls still simplify the visible graph.
+Turn off **Hide aux** and choose **External: Expand** to display all declarations already extracted.
+This does not invent dependencies beyond nodes marked as external boundaries.
+
+The overview uses lightweight Canvas drawing. Zoom in to see the original detailed cards, or search
+for a declaration to locate it without leaving the project map. Shift+Enter opens its dependency
+cone. **Fit** returns to the whole view; the minimap can also move the camera.
+
+Dense views label their simplified edge drawing and offer **Show all edges**. Rendering detail does
+not change trust profiles, exported dependencies, or kernel verification. See
+[performance measurements and checks](docs/PERFORMANCE.md) for the tested 12,896-declaration project.
+
 ## Layout
 
 ```
@@ -67,6 +82,10 @@ ProofFlow 把已构建的 Lean 4 工程画成一张从左到右的“证明工�
 最右边是最终定理。每个节点按种类着色，边框按传递信任状态着色（是否碰到 sorry、自定义公理、native_decide、
 unsafe/partial 等），并且每个节点都可以点击“验证”：用工具链自带的 `leanexport` 导出该节点的依赖闭包，
 再交给 Lean 内核以及独立实现的检查器（`lean4lean`、`nanoda`、`con-leche`、`con-ron`）重新检查。
+
+大型工程默认打开全项目地图，缩小显示概览，放大恢复原有节点卡片。取消 **Hide aux** 并将 **External**
+设为 **Expand**，可显示当前图文件中的全部声明。搜索可直接定位节点，Shift+Enter 查看其依赖锥。
+连线简化仅影响绘制，完整依赖、信任信息及后端验证规则保持不变。
 
 ## License
 

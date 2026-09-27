@@ -8,6 +8,7 @@ import { buildIndex } from "../src/graph/graphIndex";
 import { assignLayers } from "../src/graph/layers";
 import { runLayout } from "../src/graph/layout";
 import { measureAll } from "../src/graph/measure";
+import { prepareView, toWireView, type ViewWorkerRequest, type ViewWorkerResponse } from "../src/graph/viewPipeline";
 import { audit, chainsGraph, CHECKERS_435, CHECKERS_NONE, CHECKERS_OLD, layeredGraph, result, row, sample } from "./fixtures";
 
 const json = (v: unknown, status = 200): Response => new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
@@ -29,6 +30,31 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+/** Runs the real worker computation behind the Worker message contract in jsdom. */
+function stubViewWorker(): void {
+  class InProcessViewWorker {
+    onmessage: ((event: MessageEvent<ViewWorkerResponse>) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    private index: ReturnType<typeof buildIndex> | null = null;
+    private terminated = false;
+    postMessage(request: ViewWorkerRequest): void {
+      if (request.type === "init") {
+        this.index = buildIndex(request.graph);
+        queueMicrotask(() => this.send({ type: "ready" }));
+      } else if (this.index) {
+        void prepareView(this.index, request.options, request.choice)
+          .then((view) => this.send({ type: "result", id: request.id, view: toWireView(view) }))
+          .catch((error: unknown) => this.send({ type: "error", id: request.id, error: String(error) }));
+      }
+    }
+    terminate(): void { this.terminated = true; }
+    private send(message: ViewWorkerResponse): void {
+      if (!this.terminated) this.onmessage?.({ data: message } as MessageEvent<ViewWorkerResponse>);
+    }
+  }
+  vi.stubGlobal("Worker", InProcessViewWorker);
+}
 
 async function expectGraphShowsTargets(): Promise<void> {
   // Wait for ELK and the first fitView (before it, most nodes are culled as off-screen).
@@ -165,7 +191,27 @@ describe("export audit", () => {
 });
 
 describe("big cones", () => {
+  it("locates a visible declaration without leaving project mode and opens its cone on Shift+Enter", async () => {
+    mockFetch(true);
+    render(<App />);
+    await expectGraphShowsTargets();
+    fireEvent.click(screen.getByRole("button", { name: "Whole project" }));
+    await waitFor(() => expect(layoutStatus()).toMatch(/nodes, /));
+    const search = screen.getByRole("combobox", { name: "Search declarations to locate" });
+    fireEvent.change(search, { target: { value: "Demo.Main.clean_result" } });
+    await within(await screen.findByRole("listbox")).findByRole("option");
+    fireEvent.keyDown(search, { key: "Enter" });
+    const panel = await screen.findByLabelText("Node details");
+    expect(within(panel).getByText("Demo.Main.clean_result")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Whole project" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(search, { target: { value: "Demo.Main.clean_result" } });
+    await within(await screen.findByRole("listbox")).findByRole("option");
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    expect(screen.getByRole("button", { name: "Cone" }).getAttribute("aria-pressed")).toBe("true");
+  }, 60_000);
+
   it("fits a 1000-node cone after the fast layout so that every node is in view", async () => {
+    stubViewWorker();
     mockFetch(true, { graph: layeredGraph(25, 40) }); // 1001 nodes, one final theorem
     render(<App />);
     await waitFor(() => expect(layoutStatus()).toMatch(/^1001 nodes, fast layout/), { timeout: 20_000 });
@@ -184,14 +230,13 @@ describe("big cones", () => {
     }
   }, 60_000);
 
-  it("narrows a big default view to the first 12 final theorems, one click from all", async () => {
+  it("opens a large graph in whole-project mode with every local declaration", async () => {
+    stubViewWorker();
     mockFetch(true, { graph: chainsGraph(40, 20) }); // 840 nodes for all 40 final theorems
     render(<App />);
-    const notice = await screen.findByText(/Showing 12 of 40 final theorems; add more from the list or switch to whole project/, {}, { timeout: 20_000 });
-    expect(screen.getByLabelText("Target history").textContent).toContain("First 12 final theorems");
-    await waitFor(() => expect(layoutStatus()).toMatch(/^252 nodes/), { timeout: 20_000 });
-    fireEvent.click(within(notice.closest(".pf-notice") as HTMLElement).getByRole("button", { name: "Show all 40" }));
     await waitFor(() => expect(layoutStatus()).toMatch(/^840 nodes, fast layout/), { timeout: 20_000 });
+    expect(screen.getByRole("button", { name: "Whole project" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(/Whole project: 840 local declarations/)).toBeTruthy();
     expect(screen.queryByText(/Showing 12 of 40/)).toBeNull();
   }, 60_000);
 });

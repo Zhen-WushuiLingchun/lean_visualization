@@ -2,20 +2,18 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
 import type { CheckerInfo, GraphFile } from "@proofflow/schema";
 import { fetchCheckers, fetchGraph } from "./api/client";
-import { Breadcrumb, NarrowNotice } from "./components/Breadcrumb";
-import { GraphCanvas } from "./components/GraphCanvas";
+import { Breadcrumb } from "./components/Breadcrumb";
+import { canvasMinZoom, GraphCanvas } from "./components/GraphCanvas";
 import { Landing, loadSampleGraph } from "./components/Landing";
 import { NodePanel } from "./components/NodePanel";
-import { ScaleGuard } from "./components/ScaleGuard";
 import { Stats } from "./components/Stats";
 import { Toolbar, type LayoutStatus } from "./components/Toolbar";
 import { currentTheme } from "./graph/colors";
-import { buildCone, SCALE_LIMIT, type Cone, type ViewNode } from "./graph/cone";
+import { type ConeOptions, type ViewNode } from "./graph/cone";
 import { coneToGraphFile, coneToSvg, downloadText, viewColorKey } from "./graph/exportView";
 import { buildIndex } from "./graph/graphIndex";
-import { assignLayers } from "./graph/layers";
-import { chooseEngine, fitViewportFor, layoutBounds, LayoutCancelled, runLayout, type LayoutResult } from "./graph/layout";
-import { measureAll, type Size } from "./graph/measure";
+import { chooseEngine, fitViewportFor, layoutBounds } from "./graph/layout";
+import { prepareView, ViewPipeline, type PreparedView } from "./graph/viewPipeline";
 import { AppContext, initialState, reducer, ServicesContext, useApp, type AppContextValue, type GraphSource, type Services } from "./state/appState";
 import { HighlightStore } from "./state/highlight";
 import { initialView } from "./state/initialView";
@@ -24,9 +22,8 @@ import { VerifyStore } from "./state/verifyStore";
 const ALWAYS = (): boolean => true;
 
 interface ShownLayout {
-  cone: Cone;
-  result: LayoutResult;
-  sizes: Map<string, Size>;
+  key: string;
+  view: PreparedView;
 }
 
 function isTyping(el: EventTarget | null): boolean {
@@ -42,63 +39,43 @@ function Workspace() {
   const searchRef = useRef<HTMLInputElement>(null);
   const o = state.options;
 
-  // Cone, layers and sizes depend only on targets and structural options, never on selection.
-  const cone = useMemo(
-    () =>
-      index
-        ? buildCone(index, { mode: state.mode, targets: state.targets, depthLimit: o.depthLimit, hideAux: o.hideAux, external: o.external, site: o.site })
-        : null,
-    [index, state.mode, state.targets, o.depthLimit, o.hideAux, o.external, o.site],
+  const options = useMemo<ConeOptions>(
+    () => ({ mode: state.mode, targets: state.targets, depthLimit: o.depthLimit, hideAux: o.hideAux, external: o.external, site: o.site }),
+    [state.mode, state.targets, o.depthLimit, o.hideAux, o.external, o.site],
   );
-  const tooBig = cone !== null && cone.nodes.length > SCALE_LIMIT;
-  const layering = useMemo(() => {
-    if (!cone || tooBig) return null;
-    return assignLayers(
-      cone.nodes.map((n) => n.id),
-      cone.edges,
-      (id) => {
-        const v = cone.byId.get(id);
-        return !!v && v.isTarget && v.decl?.kind !== "axiom";
-      },
-    );
-  }, [cone, tooBig]);
-  const sizes = useMemo(() => (cone && !tooBig ? measureAll(cone.nodes) : null), [cone, tooBig]);
-
+  const viewKey = useMemo(() => JSON.stringify([options, o.layoutChoice]), [options, o.layoutChoice]);
+  const pipeline = useMemo(() => state.graph && index ? new ViewPipeline(state.graph, index) : null, [state.graph, index]);
+  useEffect(() => () => pipeline?.stop(), [pipeline]);
   const [shown, setShown] = useState<ShownLayout | null>(null);
   const [status, setStatus] = useState<LayoutStatus>({ phase: "idle", nodes: 0 });
+  const current = shown?.key === viewKey ? shown.view : null;
+  const cone = current?.cone ?? null;
+  const layering = current?.layering ?? null;
   useEffect(() => {
-    if (!cone) return;
-    if (tooBig) {
-      setStatus({ phase: "guard", nodes: cone.nodes.length });
-      return;
-    }
-    if (cone.nodes.length === 0) {
-      setShown(null);
-      setStatus({ phase: "empty", nodes: 0 });
-      return;
-    }
-    if (!layering || !sizes) return;
+    if (!index) return;
     const ctrl = new AbortController();
-    setStatus({ phase: "running", nodes: cone.nodes.length, engine: chooseEngine(o.layoutChoice, cone.nodes.length) });
-    const input = {
-      nodes: cone.nodes.map((n) => {
-        const s = sizes.get(n.id) ?? { width: 160, height: 74 };
-        return { id: n.id, width: s.width, height: s.height, layer: layering.layer.get(n.id) ?? 0 };
-      }),
-      edges: cone.edges.filter((_e, k) => !layering.feedback.has(k)),
-    };
-    runLayout(input, { signal: ctrl.signal, choice: o.layoutChoice })
-      .then((result) => {
+    const estimate = options.mode === "project" ? index.localIds.length : options.targets.length;
+    setShown(null);
+    setStatus({ phase: "running", nodes: estimate, engine: chooseEngine(o.layoutChoice, estimate) });
+    const useWorker = typeof Worker !== "undefined" && pipeline;
+    const task = useWorker ? pipeline.prepare(options, o.layoutChoice, ctrl.signal) :
+      index.byId.size <= 600 ? prepareView(index, options, o.layoutChoice) : Promise.reject(new Error("A Web Worker is required to open this large graph"));
+    task
+      .then((view) => {
         if (ctrl.signal.aborted) return;
-        setShown({ cone, result, sizes });
-        setStatus({ phase: "done", nodes: cone.nodes.length, engine: result.engine, ms: result.durationMs });
+        if (view.cone.nodes.length === 0) {
+          setStatus({ phase: "empty", nodes: 0 });
+          return;
+        }
+        setShown({ key: viewKey, view });
+        setStatus({ phase: "done", nodes: view.cone.nodes.length, engine: view.result.engine, ms: view.result.durationMs });
       })
       .catch((e: unknown) => {
-        if (e instanceof LayoutCancelled || ctrl.signal.aborted) return;
-        setStatus({ phase: "error", nodes: cone.nodes.length, error: e instanceof Error ? e.message : String(e) });
+        if (ctrl.signal.aborted) return;
+        setStatus({ phase: "error", nodes: estimate, error: e instanceof Error ? e.message : String(e) });
       });
     return () => ctrl.abort();
-  }, [cone, tooBig, layering, sizes, o.layoutChoice]);
+  }, [index, pipeline, options, o.layoutChoice, viewKey]);
 
   const matches = useMemo(() => {
     const tf = o.taintFilter;
@@ -111,10 +88,10 @@ function Workspace() {
 
   // Deterministic fit from the known layout bounds (same function as the automatic fit in GraphCanvas).
   const fit = useCallback(() => {
-    if (!shown) return;
+    if (!current) return;
     const { width, height } = store.getState();
-    void rf.setViewport(fitViewportFor(layoutBounds(shown.result.positions, shown.sizes), width, height), { duration: 200 });
-  }, [rf, store, shown]);
+    void rf.setViewport(fitViewportFor(layoutBounds(current.result.positions, current.sizes), width, height, canvasMinZoom(current.cone)), { duration: 200 });
+  }, [rf, store, current]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
@@ -142,20 +119,18 @@ function Workspace() {
     if (index && cone) downloadText(`${projectName}-cone.json`, "application/json", `${JSON.stringify(coneToGraphFile(index, cone), null, 2)}\n`);
   };
   const exportSvg = (): void => {
-    if (shown) downloadText(`${projectName}-cone.svg`, "image/svg+xml", coneToSvg(shown.cone, shown.result, shown.sizes, currentTheme()));
+    if (current) downloadText(`${projectName}-cone.svg`, "image/svg+xml", coneToSvg(current.cone, current.result, current.sizes, currentTheme()));
   };
 
   return (
     <div className="pf-app">
-      <Toolbar searchRef={searchRef} layout={status} canExport={shown !== null && !tooBig} onExportJson={exportJson} onExportSvg={exportSvg} onFit={fit} />
+      <Toolbar searchRef={searchRef} layout={status} visibleIds={cone?.byId} canExport={current !== null} onExportJson={exportJson} onExportSvg={exportSvg} onFit={fit} />
       <Breadcrumb cone={cone} />
-      <NarrowNotice />
       <div className="pf-main">
         <Stats />
         <section className="pf-center" aria-label="Dependency graph">
-          {shown && !tooBig && status.phase !== "empty" && <GraphCanvas cone={shown.cone} layout={shown.result} sizes={shown.sizes} matches={matches} />}
-          {tooBig && cone && <ScaleGuard cone={cone} />}
-          {status.phase === "running" && !shown && (
+          {current && status.phase !== "empty" && <GraphCanvas cone={current.cone} layout={current.result} sizes={current.sizes} matches={matches} />}
+          {status.phase === "running" && !current && (
             <div className="pf-overlay">
               <div className="pf-card pf-status is-busy">
                 Layouting {status.nodes} nodes ({status.engine === "fast" ? "fast layout" : "ELK"})...
@@ -196,9 +171,9 @@ export function App() {
     (graph: GraphFile, source: GraphSource, label: string) => {
       verify.reset();
       verify.enabled = source === "server";
-      const idx = buildIndex(graph);
-      const { initialTargets, narrowed } = initialView(idx);
-      dispatch({ type: "loaded", graph, index: idx, source, label, defaultTargets: idx.localSinks, initialTargets, narrowed });
+      const idx = buildIndex(graph, { metadataOnly: typeof Worker !== "undefined" });
+      const { initialTargets, mode } = initialView(idx);
+      dispatch({ type: "loaded", graph, index: idx, source, label, defaultTargets: idx.localSinks, initialTargets, narrowed: null, initialMode: mode });
     },
     [verify],
   );
