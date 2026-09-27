@@ -38,9 +38,16 @@ The audience is someone auditing a formalization (their own, a collaborator's, o
 - `Lean.collectAxioms` is correct but slow when called per declaration (rebuilds its cache each call).
   The extractor must do one shared-cache traversal (see `leanprover-community/axiom-audit`).
   `collectAxiomsMany` (lean4 PR #14157) is not merged; do not depend on it.
-- Known core bug: `#print axioms` may under-report axioms of imported inductives in some versions
-  (lean4 issue #15226). Our own traversal walks `ConstantInfo.getUsedConstantsAsSet` directly and is not
-  affected, but keep a regression test for an inductive that reaches a custom axiom through an import.
+- Known core bug: `#print axioms` under-reports axioms of imported inductives on v4.35.0-rc3
+  (lean4 issue #15226). Our own SCC traversal over `getUsedConstants` is not affected. `examples/toy`
+  reproduces it (`Toy.Signed`, `Toy.signed_trivial`); `lean/CrossCheck.lean` proves the extractor is the
+  correct side, and `examples/toy/expected/README.md` documents the two expected mismatches. Do not
+  "fix" the extractor to agree with `#print axioms`.
+- Flag taints (`unsafe`/`partial`/`extern`/`implementedBy`) are NOT propagated out of core packages
+  (`Init`, `Std`, `Lean`, `Lake`) by default, otherwise every theorem about `Nat` would be `extern`-tainted
+  through `Nat.add`. `--core-flag-taints` restores the literal rule. Axiom taints always propagate.
+- `native_decide` on v4.35 mints a per-use axiom `<decl>._native.native_decide.ax_i_j`; on ≤ 4.34 it uses
+  `Lean.ofReduceBool`, which rests on `Lean.trustCompiler`. All three are classified `nativeDecide`.
 - `leanexport <Module> -- <decl>` exports only that declaration and its transitive closure (verified:
   183 lines for a trivial theorem, 1 s). `leanchecker --from-export file.ndjson` prints
   `Lean default kernel accepts the solution` and exits 0 on success (verified, 0.2 s).
@@ -51,6 +58,10 @@ The audience is someone auditing a formalization (their own, a collaborator's, o
   `importModules #[{module := `Root}] {} 0` to obtain the environment.
 - Windows paths: prefer forward slashes internally; quote every path passed to a subprocess; never rely
   on a POSIX shell. Node `child_process.spawn` with an args array, `shell: false`.
+- Verified end to end on 2026-09-27: `proofflow extract` on `examples/toy` in 4 s (288 nodes),
+  `proofflow verify Toy.cleanMain --checkers all` accepted by all six checkers in 1.4 s, and the viewer
+  drove a live verification through the API (SSE) in headless Chrome. `con-leche`/`con-ron` decline
+  (exit 2) any closure containing `sorryAx` or a custom axiom; that is expected and shown as a grey dash.
 
 ## 3. Repository layout
 
@@ -77,8 +88,10 @@ Package manager: `pnpm` (workspace). Node ≥ 22. TypeScript strict, ESM only, `
    `packages/schema/src/graph.ts`. The extractor writes it; the server validates it with zod before serving;
    the web app types against it. Never add a field on one side without adding it to the schema first.
 2. **Edge direction is dependency → dependent.** `source` is the thing used, `target` is the thing that
-   uses it. Axioms have no incoming edges. Final theorems have no outgoing edges (within the project).
-   This is the workflow reading order (left → right) and it is fixed.
+   uses it. Axioms are sources in the viewer (column 0): `graph.json` may still record what a local
+   axiom's *statement* mentions in `deps.stmt` (e.g. `Toy.oracle` mentions `Nat`), and the viewer drops
+   those edges. Final theorems have no outgoing edges (within the project). This is the workflow reading
+   order (left → right) and it is fixed.
 3. **Node id = fully qualified Lean name** as printed by `Name.toString` (with «» escaping when needed).
 4. **Trust profile is computed in the extractor, transitively, once.** `axioms` is the complete transitive
    axiom set. `taints` is derived (see schema) and is also transitive. The web app must not recompute
@@ -133,3 +146,15 @@ audience needs to see).
 | Web viewer | subagent C (Opus 5.5) | `packages/web` |
 
 The lead audits every deliverable against sections 4 and 5 before it is merged.
+
+## 8. Audit checklist (run before any release or after touching the extractor/checkers)
+
+1. `pnpm build && pnpm test` green in all three packages.
+2. `PROOFFLOW_INTEGRATION=1 pnpm --filter @proofflow/server test` green (golden equality on `examples/toy`
+   plus a real six-checker run).
+3. In `examples/toy`: `lake env lean --run ../../lean/CrossCheck.lean -- expected/graph.json Toy` exits 0
+   (every node agrees with a cache-free axiom walk; the two documented `#print axioms` mismatches are expected).
+4. `proofflow verify Toy.cleanMain --checkers all` → accepted; `proofflow verify Toy.everything --checkers all`
+   → partial with con-leche/con-ron declined and the four kernels accepted.
+5. Open the viewer on `examples/toy`, select `Toy.everything`, run `Verify (all checkers)`, confirm the
+   table matches step 4 and the badge is a grey dash (declined), not green.

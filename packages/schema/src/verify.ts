@@ -113,8 +113,12 @@ export type Job = z.infer<typeof JobSchema>;
 
 export const VerifyRequestSchema = z.object({
   decl: z.string().min(1),
-  /** Defaults to L1 only. */
-  checkers: z.array(CheckerNameSchema).optional(),
+  /**
+   * Checkers to run. Defaults to L1 only (`leanchecker`). The literal `"all"` means every checker
+   * that is available in the active toolchain (missing ones are omitted rather than reported as
+   * `unavailable`).
+   */
+  checkers: z.union([z.array(CheckerNameSchema), z.literal("all")]).optional(),
   /** Ignore cache. */
   force: z.boolean().optional(),
 });

@@ -54,10 +54,18 @@ export const TAINT_SEVERITY: readonly Taint[] = [
 
 export const STANDARD_AXIOMS = ["propext", "Classical.choice", "Quot.sound"] as const;
 export const SORRY_AXIOM = "sorryAx" as const;
-export const NATIVE_DECIDE_AXIOMS = ["Lean.ofReduceBool", "Lean.ofReduceNat"] as const;
+/**
+ * `Lean.trustCompiler` is the axiom `Lean.ofReduceBool` / `ofReduceNat` rest on in Lean ≤ 4.34;
+ * it means the same thing (the compiler was trusted), so it is classified with them.
+ */
+export const NATIVE_DECIDE_AXIOMS = ["Lean.ofReduceBool", "Lean.ofReduceNat", "Lean.trustCompiler"] as const;
 
 export const SourceRangeSchema = z.object({
-  /** Path relative to the audited project root for local declarations; absolute otherwise. */
+  /**
+   * Local declarations: path relative to the audited project root. External declarations: path
+   * relative to the source search-path root that contains the module (e.g. `Init/Prelude.lean`),
+   * so the value is the same on every machine. Forward slashes.
+   */
   file: z.string(),
   line: z.number().int().nonnegative(),
   col: z.number().int().nonnegative(),

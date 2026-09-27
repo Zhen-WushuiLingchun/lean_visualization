@@ -1,0 +1,1717 @@
+{
+  "meta": {
+    "schemaVersion": 1,
+    "generatedAt": "2026-09-27T09:00:00.000Z",
+    "extractor": {
+      "name": "proofflow-extract",
+      "version": "0.1.0"
+    },
+    "lean": {
+      "version": "4.35.0-rc3",
+      "githash": "0000000000000000000000000000000000000000"
+    },
+    "project": {
+      "name": "demo",
+      "dir": "C:/work/demo",
+      "roots": [
+        "Demo"
+      ],
+      "localPrefixes": [
+        "Demo"
+      ]
+    },
+    "options": {
+      "expandExternal": false,
+      "statementMaxChars": 2000
+    }
+  },
+  "stats": {
+    "nodes": 37,
+    "localNodes": 26,
+    "externalNodes": 11,
+    "edges": 73,
+    "byKind": {
+      "axiom": 6,
+      "inductive": 4,
+      "definition": 9,
+      "theorem": 14,
+      "constructor": 2,
+      "recursor": 1,
+      "opaque": 1
+    },
+    "byTaint": {
+      "customAxiom": 3,
+      "nativeDecide": 3,
+      "implementedBy": 3,
+      "extern": 3,
+      "partial": 3,
+      "sorry": 2
+    },
+    "localSinks": [
+      "Demo.Main.main_theorem",
+      "Demo.Main.clean_result"
+    ],
+    "axiomNodes": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound",
+      "sorryAx",
+      "Demo.Axioms.oracle",
+      "Demo.Arith.bigCheck._native.native_decide.ax_1_1"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "propext",
+      "shortName": "propext",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Init.Core",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": "The axiom of propositional extensionality.",
+      "statement": "∀ {a b : Prop}, (a ↔ b) → a = b",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Classical.choice",
+      "shortName": "choice",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Init.Prelude",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "{α : Sort u} → Nonempty α → α",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Quot.sound",
+      "shortName": "sound",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Init.Core",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "∀ {α : Sort u} {r : α → α → Prop} {a b : α}, r a b → Quot.mk r a = Quot.mk r b",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Quot.sound"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "sorryAx",
+      "shortName": "sorryAx",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Init.Prelude",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "(α : Sort u) → optParam Bool false → α",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "sorryAx"
+      ],
+      "taints": [
+        "sorry"
+      ],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Nat",
+      "shortName": "Nat",
+      "kind": "inductive",
+      "subKind": "none",
+      "module": "Init.Prelude",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": "The natural numbers.",
+      "statement": "Type",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Add",
+      "shortName": "Add",
+      "kind": "inductive",
+      "subKind": "class",
+      "module": "Init.Prelude",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "Type u → Type u",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Nat.add",
+      "shortName": "add",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Init.Prelude",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "Nat → Nat → Nat",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Nat",
+          "Nat.rec",
+          "Nat.succ"
+        ]
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Nat.add_comm",
+      "shortName": "add_comm",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Init.Data.Nat.Basic",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "∀ (n m : Nat), n + m = m + n",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat",
+          "Eq",
+          "HAdd.hAdd"
+        ],
+        "proof": [
+          "Nat.rec",
+          "Nat.add_succ"
+        ]
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Classical.em",
+      "shortName": "em",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Init.Classical",
+      "package": "Init",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "∀ (p : Prop), p ∨ ¬p",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Or",
+          "Not"
+        ],
+        "proof": [
+          "Classical.choice",
+          "propext",
+          "Classical.axiomOfChoice"
+        ]
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Nat.Prime",
+      "shortName": "Prime",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Mathlib.Data.Nat.Prime.Defs",
+      "package": "Mathlib",
+      "isLocal": false,
+      "isAux": false,
+      "src": {
+        "file": "C:/work/demo/.lake/packages/mathlib/Mathlib/Data/Nat/Prime/Defs.lean",
+        "line": 37,
+        "col": 0,
+        "endLine": 38,
+        "endCol": 30
+      },
+      "doc": null,
+      "statement": "Nat → Prop",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Irreducible"
+        ]
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Nat.Prime.two_le",
+      "shortName": "two_le",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Mathlib.Data.Nat.Prime.Defs",
+      "package": "Mathlib",
+      "isLocal": false,
+      "isAux": false,
+      "src": null,
+      "doc": null,
+      "statement": "∀ {p : Nat}, Nat.Prime p → 2 ≤ p",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat.Prime",
+          "LE.le"
+        ],
+        "proof": [
+          "Nat.Prime",
+          "Nat.Prime.one_lt"
+        ]
+      },
+      "depsComplete": false
+    },
+    {
+      "id": "Demo.Axioms.oracle",
+      "shortName": "oracle",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Demo.Axioms",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Axioms.lean",
+        "line": 5,
+        "col": 0,
+        "endLine": 7,
+        "endCol": 20
+      },
+      "doc": "Assumed without proof. Replace with a real proof before release.",
+      "statement": "∀ (n : Nat), n % 2 = 0 ∨ n % 2 = 1",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Demo.Axioms.oracle"
+      ],
+      "taints": [
+        "customAxiom"
+      ],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.bigCheck._native.native_decide.ax_1_1",
+      "shortName": "ax_1_1",
+      "kind": "axiom",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 9,
+        "col": 0,
+        "endLine": 11,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Lean.reduceBool Demo.Arith.bigCheck._nativeDecide_1_1 = true",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Demo.Arith.bigCheck._native.native_decide.ax_1_1"
+      ],
+      "taints": [
+        "nativeDecide"
+      ],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Color",
+      "shortName": "Color",
+      "kind": "inductive",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 13,
+        "col": 0,
+        "endLine": 15,
+        "endCol": 20
+      },
+      "doc": "Two colours, used to exercise inductive types.",
+      "statement": "Type",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Color.red",
+      "shortName": "red",
+      "kind": "constructor",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 17,
+        "col": 0,
+        "endLine": 19,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Demo.Color",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Color"
+        ],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Color.rec",
+      "shortName": "rec",
+      "kind": "recursor",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": true,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 21,
+        "col": 0,
+        "endLine": 23,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "{motive : Demo.Color → Sort u} → motive Demo.Color.red → (t : Demo.Color) → motive t",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Color",
+          "Demo.Color.red"
+        ],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Color.casesOn",
+      "shortName": "casesOn",
+      "kind": "definition",
+      "subKind": "abbrev",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": true,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 25,
+        "col": 0,
+        "endLine": 27,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "{motive : Demo.Color → Sort u} → (t : Demo.Color) → motive Demo.Color.red → motive t",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Color",
+          "Demo.Color.red"
+        ],
+        "proof": [
+          "Demo.Color.rec"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Color.toNat",
+      "shortName": "toNat",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 29,
+        "col": 0,
+        "endLine": 31,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Demo.Color → Nat",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Color",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Color.casesOn",
+          "Nat"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Point",
+      "shortName": "Point",
+      "kind": "inductive",
+      "subKind": "structure",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 33,
+        "col": 0,
+        "endLine": 35,
+        "endCol": 20
+      },
+      "doc": "A point in the integer grid.",
+      "statement": "Type",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Point.mk",
+      "shortName": "mk",
+      "kind": "constructor",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 37,
+        "col": 0,
+        "endLine": 39,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Nat → Nat → Demo.Point",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat",
+          "Demo.Point"
+        ],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Point.add.match_1",
+      "shortName": "match_1",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": true,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 41,
+        "col": 0,
+        "endLine": 43,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "(motive : Demo.Point → Demo.Point → Sort u) → (p q : Demo.Point) → ((a b c d : Nat) → motive ⟨a, b⟩ ⟨c, d⟩) → motive p q",
+      "statementTruncated": false,
+      "levelParams": [
+        "u"
+      ],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Point",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Point.mk",
+          "Nat.add"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Point.add",
+      "shortName": "add",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 45,
+        "col": 0,
+        "endLine": 47,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Demo.Point → Demo.Point → Demo.Point",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Point"
+        ],
+        "proof": [
+          "Demo.Point.mk",
+          "Demo.Point.add.match_1"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.instAddPoint",
+      "shortName": "instAddPoint",
+      "kind": "definition",
+      "subKind": "instance",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 49,
+        "col": 0,
+        "endLine": 51,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Add Demo.Point",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": true,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Add",
+          "Demo.Point"
+        ],
+        "proof": [
+          "Demo.Point.add"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Point.add_comm",
+      "shortName": "add_comm",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Basic",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Basic.lean",
+        "line": 53,
+        "col": 0,
+        "endLine": 59,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (p q : Demo.Point), p + q = q + p",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Demo.Point",
+          "Demo.instAddPoint"
+        ],
+        "proof": [
+          "Nat.add_comm",
+          "Demo.Point.add",
+          "Demo.Point.mk"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.fib",
+      "shortName": "fib",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 57,
+        "col": 0,
+        "endLine": 59,
+        "endCol": 20
+      },
+      "doc": "Specification of Fibonacci. Compiled code uses `fibImpl` via `@[implemented_by]`.",
+      "statement": "Nat → Nat",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": true,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "implementedBy"
+      ],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Nat",
+          "Nat.add"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.fib_zero",
+      "shortName": "fib_zero",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 61,
+        "col": 0,
+        "endLine": 63,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Demo.Impl.fib 0 = 0",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "implementedBy"
+      ],
+      "deps": {
+        "stmt": [
+          "Demo.Impl.fib",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Impl.fib"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.fastAdd",
+      "shortName": "fastAdd",
+      "kind": "opaque",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 65,
+        "col": 0,
+        "endLine": 67,
+        "endCol": 20
+      },
+      "doc": "Implemented in C as `demo_fast_add`.",
+      "statement": "Nat → Nat → Nat",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": true,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "extern"
+      ],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": []
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.fastAdd_self",
+      "shortName": "fastAdd_self",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 69,
+        "col": 0,
+        "endLine": 71,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (n m : Nat), Demo.Impl.fastAdd n m = Demo.Impl.fastAdd n m",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "extern"
+      ],
+      "deps": {
+        "stmt": [
+          "Demo.Impl.fastAdd",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Impl.fastAdd"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.loop",
+      "shortName": "loop",
+      "kind": "definition",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 73,
+        "col": 0,
+        "endLine": 75,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Nat → Nat",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": true,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "partial"
+      ],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Nat"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Impl.loop_eq",
+      "shortName": "loop_eq",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Impl",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Impl.lean",
+        "line": 77,
+        "col": 0,
+        "endLine": 79,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (n : Nat), Demo.Impl.loop n = Demo.Impl.loop n",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [
+        "partial"
+      ],
+      "deps": {
+        "stmt": [
+          "Demo.Impl.loop",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Impl.loop"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.two_add",
+      "shortName": "two_add",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 81,
+        "col": 0,
+        "endLine": 83,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (n : Nat), 2 + n = n + 2",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Nat.add_comm"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.bigCheck",
+      "shortName": "bigCheck",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 85,
+        "col": 0,
+        "endLine": 87,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "Demo.Color.toNat Demo.Color.red + 2 ^ 20 = 1048576",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": true
+      },
+      "axioms": [
+        "Demo.Arith.bigCheck._native.native_decide.ax_1_1"
+      ],
+      "taints": [
+        "nativeDecide"
+      ],
+      "deps": {
+        "stmt": [
+          "Demo.Color.toNat",
+          "Demo.Color.red",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Arith.bigCheck._native.native_decide.ax_1_1"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.wip",
+      "shortName": "wip",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 89,
+        "col": 0,
+        "endLine": 91,
+        "endCol": 20
+      },
+      "doc": "TODO: finish this proof.",
+      "statement": "∀ (n : Nat), n * 0 = 0",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": true,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "sorryAx"
+      ],
+      "taints": [
+        "sorry"
+      ],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "sorryAx"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.byOracle",
+      "shortName": "byOracle",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 93,
+        "col": 0,
+        "endLine": 95,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (n : Nat), n % 2 = 0 ∨ n % 2 = 1",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Demo.Axioms.oracle"
+      ],
+      "taints": [
+        "customAxiom"
+      ],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Axioms.oracle"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Arith.classical",
+      "shortName": "classical",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Arith",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Arith.lean",
+        "line": 97,
+        "col": 0,
+        "endLine": 99,
+        "endCol": 20
+      },
+      "doc": null,
+      "statement": "∀ (n : Nat), n = 0 ∨ ¬n = 0",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat"
+        ],
+        "proof": [
+          "Classical.em"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Main.main_theorem",
+      "shortName": "main_theorem",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Main",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Main.lean",
+        "line": 101,
+        "col": 0,
+        "endLine": 113,
+        "endCol": 20
+      },
+      "doc": "The headline result. It deliberately touches every trust case so the audit view has something to show.",
+      "statement": "∀ (p q : Demo.Point) (n : Nat), p + q = q + p ∧ 2 + n = n + 2 ∧ Demo.Impl.fib 0 = 0 ∧ (n % 2 = 0 ∨ n % 2 = 1) ∧ n * 0 = 0",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice",
+        "Demo.Arith.bigCheck._native.native_decide.ax_1_1",
+        "Demo.Axioms.oracle",
+        "Quot.sound",
+        "propext",
+        "sorryAx"
+      ],
+      "taints": [
+        "implementedBy",
+        "extern",
+        "partial",
+        "nativeDecide",
+        "customAxiom",
+        "sorry"
+      ],
+      "deps": {
+        "stmt": [
+          "Demo.Point",
+          "Demo.instAddPoint",
+          "Demo.Impl.fib",
+          "Nat"
+        ],
+        "proof": [
+          "Demo.Point.add_comm",
+          "Demo.Arith.two_add",
+          "Demo.Impl.fib_zero",
+          "Demo.Arith.byOracle",
+          "Demo.Arith.wip",
+          "Demo.Arith.bigCheck",
+          "Demo.Impl.fastAdd_self",
+          "Demo.Impl.loop_eq",
+          "Demo.Arith.classical"
+        ]
+      },
+      "depsComplete": true
+    },
+    {
+      "id": "Demo.Main.clean_result",
+      "shortName": "clean_result",
+      "kind": "theorem",
+      "subKind": "none",
+      "module": "Demo.Main",
+      "package": "Demo",
+      "isLocal": true,
+      "isAux": false,
+      "src": {
+        "file": "Demo/Main.lean",
+        "line": 105,
+        "col": 0,
+        "endLine": 110,
+        "endCol": 20
+      },
+      "doc": "A result that rests only on the standard axioms.",
+      "statement": "∀ (p : Nat), Nat.Prime p → Demo.Color.toNat Demo.Color.red + 2 ≤ p + 2",
+      "statementTruncated": false,
+      "levelParams": [],
+      "flags": {
+        "unsafe": false,
+        "partial": false,
+        "noncomputable": false,
+        "extern": false,
+        "implementedBy": false,
+        "private": false,
+        "protected": false,
+        "instance": false,
+        "directSorry": false,
+        "directNativeDecide": false
+      },
+      "axioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "taints": [],
+      "deps": {
+        "stmt": [
+          "Nat.Prime",
+          "Demo.Color.toNat",
+          "Demo.Color.red",
+          "Nat"
+        ],
+        "proof": [
+          "Nat.Prime.two_le",
+          "Demo.Arith.two_add",
+          "Demo.Color.toNat"
+        ]
+      },
+      "depsComplete": true
+    }
+  ]
+}

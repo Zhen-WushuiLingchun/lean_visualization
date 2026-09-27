@@ -6,7 +6,14 @@ command through `lake env <cmd> ...` from the project root, which puts the toolc
 and sets `LEAN_PATH`. These invocations are the same ones `lake check --paranoid` uses
 (`src/lake/Lake/CLI/Check.lean`, `bundledKernels`).
 
-Set `LEAN_ABORT_ON_PANIC=1` in the environment of every checker (Lake does).
+Set `LEAN_ABORT_ON_PANIC=1` in the environment of every checker (Lake does), **except `lean4lean`**.
+Verified on a tampered export: lean4lean's rejection printer itself panics
+(`PANIC at ...EnvExtension.getStateImpl ...: invalid environment extension has been accessed`), so
+with `LEAN_ABORT_ON_PANIC=1` the process aborts before exiting (exit 3221226505 = `0xC0000409` on
+Windows) and the rejection looks like a crash. Without the variable it prints
+`uncaught exception: at t4: (kernel) declaration type mismatch, 't4' has type ...` and exits 1. The
+server runs lean4lean without the variable and, as a fallback, treats `declaration type mismatch` /
+`but it is expected to have type` in lean4lean's output as `rejected` whatever the exit code.
 
 ## Export
 
@@ -24,7 +31,7 @@ lake env leanexport <Module> -- <decl> [<decl> ...]   > closure.ndjson
 
 | name (schema) | binary | argv | accept | reject | decline |
 |---|---|---|---|---|---|
-| `leanchecker` | `leanchecker` | `--from-export <file>` | exit 0, prints `Lean default kernel accepts the solution` | exit 1, error text on stderr (`--silent` suppresses all output; do **not** pass it, we want the message) | n/a |
+| `leanchecker` | `leanchecker` | `--from-export <file>` | exit 0, prints `Lean default kernel accepts the solution` | exit 1, rejection text on **stdout** (verified: `Lean default kernel rejects the solution: while replaying declaration 't4': (kernel) declaration type mismatch, ...`; stderr is empty). `--silent` suppresses all output; do **not** pass it, we want the message | n/a |
 | `leanchecker-paranoid` | `leanchecker-paranoid` | `--from-export <file>` | exit 0, same line | exit 1 | n/a |
 | `lean4lean` | `lean4lean` | `--import <file>` | exit 0, prints `checked N declarations` | exit 1, prints a type-mismatch explanation | n/a |
 | `nanoda` | `nanoda_bin` | `<config.json>` (single positional arg, see below) | exit 0 (silent unless `print_success_message`) | exit 101 (Rust panic, e.g. `assertion failed: self.def_eq(u, v)`) | exit 101 with `declaration not found in infer_const, <axiom>` when an axiom is not permitted |

@@ -25,10 +25,10 @@ Lean. The server is the only piece that spawns subprocesses.
 
 ## 2. Extractor (`lean/Extract.lean`)
 
-A single Lean file with `main : List String → IO Unit`, run as
-`lake env lean --run lean/Extract.lean -- <args>` from the project root. The server prepends the
-project's root `import` lines to a copy of the template at run time (the template contains the marker
-`-- PROOFFLOW_IMPORTS --`), so the same file works for any project without a Lake dependency.
+A single Lean file with `main : List String → IO UInt32`, run as
+`lake env lean --run lean/Extract.lean -- <args>` from the project root. It has no static import of
+the audited project: the roots given on the command line are loaded at run time with
+`importModules`, so the same file works for any project without a Lake dependency.
 
 Steps:
 1. `initSearchPath (← findSysroot)`; `importModules` the roots; obtain `env`.
@@ -46,11 +46,16 @@ Steps:
    via `ppExpr` under `MetaM` (truncated to `--statement-max-chars`, default 2000), flags from attributes
    (`Lean.Compiler.implementedByAttr`, `externAttr`, `isNoncomputable`, `isInstance`, `isPrivateName`,
    `isProtected`, `isUnsafe`, `partial` is detected via the `_unsafe_rec` companion or `DefinitionSafety.partial`).
-7. `isAux` heuristics: `.rec`, `.recOn`, `.casesOn`, `.brecOn`, `.below`, `.noConfusion`,
-   `.noConfusionType`, `.sizeOf_spec`, `_sizeOf_`, `.eq_<n>`, `.eq_def`, `.match_<n>`, `.proof_<n>`,
-   `._proof_<n>`, `.injEq`, `.inj`, `.mk.sizeOf_spec`, `instSizeOf…`, `._unsafe_rec`, names with
-   `_private` or `_hyg` components. Aux nodes are emitted (they carry real dependencies) but the viewer
-   hides them by default and folds their edges through.
+7. `isAux`: companions of inductives and definitions (`.rec`, `.recOn`, `.casesOn`, `.brecOn`,
+   `.below`, `.noConfusion`, `.noConfusionType`, `.sizeOf_spec`, `.eq_<n>`, `.eq_def`, `.match_<n>`,
+   `.proof_<n>`, `.injEq`, `.inj`, `._unsafe_rec`, `.ctorElim`, `.elim`, `.splitter`, hygienic `_hyg`
+   names, …) matched by parent kind plus prefix rules. A hand-written `private def` is *not* aux. Aux
+   nodes are emitted (they carry real dependencies) but the viewer hides them by default and folds their
+   edges through.
+8. Flag taints do not propagate out of core packages by default (see AGENTS.md §2, `--core-flag-taints`).
+   `@[implemented_by]` and `partial` add implementation edges that carry flag taints only, never axioms.
+9. Every axiom reachable from a local node is emitted as a node even in default mode, so `graph.json` is
+   self-contained and the viewer's column 0 needs no synthetic nodes.
 8. Write `graph.json` with `Lean.Json` (streamed with a handle, not built as one giant `Json` value).
 
 Performance target: a project of 5k local declarations over Mathlib in under 60 s including import.
@@ -60,7 +65,7 @@ Full-closure mode over Mathlib is out of scope for v1 (leanviz/gonzalgo already 
 
 - `proofflow extract [--project DIR] [--root Name]... [--expand-external] [--no-build]`
   Runs `lake build` (unless `--no-build`), materialises the script, runs it, validates the output.
-- `proofflow serve [--project DIR] [--port 5173] [--open]` serves the built web app and the API.
+- `proofflow serve [--project DIR] [--port 4870] [--host 127.0.0.1] [--open]` serves the built web app and the API.
 - `proofflow verify <decl> [--checkers a,b,c]` runs the verification pipeline from the CLI and prints the
   `VerifyResult` as JSON (usable in CI).
 - `proofflow checkers` lists which checkers exist in the active toolchain.
@@ -72,7 +77,7 @@ API (all JSON):
 | GET | `/api/graph` | validated `GraphFile` |
 | GET | `/api/source?decl=` | `{ file, line, endLine, text }` snippet of the declaration (local only) |
 | GET | `/api/checkers` | `CheckerInfo[]` (availability + version) |
-| POST | `/api/verify` | body `{ decl, checkers?: CheckerName[], force?: boolean }` → `{ jobId }` |
+| POST | `/api/verify` | body `{ decl, checkers?: CheckerName[] \| "all", force?: boolean }` → `{ jobId }` (202; 409 when no graph yet) |
 | GET | `/api/jobs` | list of jobs |
 | GET | `/api/jobs/:id` | `Job` (status, log tail, result) |
 | GET | `/api/jobs/:id/events` | Server-Sent Events stream of log lines and the final result |
@@ -81,14 +86,20 @@ API (all JSON):
 
 Verification pipeline for one declaration:
 1. Resolve which root module to export from (the node's module).
-2. `lake env leanexport <Module> -- <decl>` → `.proofflow/export/<decl>.ndjson`; sha256 → `exportHash`.
-   If a cached result for `(decl, exportHash, checkerSet)` exists and `force` is false, return it.
+2. `lake env leanexport <Module> -- <decl>` → `.proofflow/export/<slug>.ndjson` where `<slug>` is an
+   ASCII-safe form of the name plus a short hash; sha256 of the stream → `exportHash`. An export is
+   reused only when it is newer than `graph.json`. If cached results for `(decl, exportHash)` cover
+   the requested checkers with `accepted`/`rejected`/`declined` and `force` is false, return them.
 3. Run requested checkers concurrently (default concurrency 2), each with a timeout (default 600 s),
    capturing stdout/stderr tails (last 4 KB). Exact commands are in `docs/CHECKERS.md`.
-4. Persist `VerifyResult` to `.proofflow/cache/<decl>/<exportHash>.json` and return it.
+4. Persist `VerifyResult` to `.proofflow/cache/<slug>/<exportHash>.json` (merging checker results
+   for the same hash) and return it.
 
-One job queue, serial extraction, bounded checker concurrency. Jobs survive only in memory; results
-survive on disk.
+One job queue: extraction is exclusive (it rebuilds the `.olean`s that exports read), verification
+runs two at a time. Jobs survive only in memory; results survive on disk.
+
+SSE contract for `/api/jobs/:id/events`: `event: log` with one raw line, `event: done` with the `Job`
+JSON after which the stream closes, a `: ping` comment every 15 s; a finished job replays its log.
 
 ## 4. Web viewer (`packages/web`)
 

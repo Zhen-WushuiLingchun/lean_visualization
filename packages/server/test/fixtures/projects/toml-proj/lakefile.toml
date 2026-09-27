@@ -1,0 +1,30 @@
+# A lakefile.toml exercising the subset ProofFlow parses.
+name = "toy-toml" # trailing comment
+version = "0.1.0"
+defaultTargets = ["Toy"]
+testDriver = 'Tests'
+
+[leanOptions]
+pp.unicode.fun = true
+autoImplicit = false
+
+[[require]]
+name = "batteries"
+git = "https://github.com/leanprover-community/batteries"
+rev = "main"
+
+[[lean_lib]]
+name = "Toy"
+
+[[lean_lib]]
+name = "Extra"
+srcDir = "src/extra"
+roots = [
+  "Extra.A", # first root
+  "Extra.B",
+]
+globs = ["Extra.+"]
+
+[[lean_exe]]
+name = "toycli"
+root = "Main"
