@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ExtractError, IMPORTS_MARKER, extractProject, extractorArgs, locateExtractScript, parseGraph } from "../src/extract.js";
 import { exeName } from "../src/project.js";
-import { FakeRunner, fakeProject, loadToyGraph, removeDir, tempDir, type FakeCall, type FakeReply } from "./helpers.js";
+import { FakeRunner, fakeOlean, fakeProject, loadToyGraph, removeDir, tempDir, type FakeCall, type FakeReply } from "./helpers.js";
 
 describe("extractor CLI contract", () => {
   it("builds the argument list in the documented shape", () => {
@@ -105,6 +105,7 @@ describe("extractProject", () => {
     writeFileSync(lake, "", { mode: 0o755 });
     env = { PATH: bin };
     script = path.join(dir, "Extract.lean");
+    for (const m of ["Toy", "Toy.Main", "Extra"]) fakeOlean(dir, m);
     writeFileSync(script, "def main (args : List String) : IO Unit := pure ()\n");
   });
   afterEach(() => removeDir(dir));
@@ -184,6 +185,32 @@ describe("extractProject", () => {
     await expect(extractProject({ project, runner: r2, env, scriptPath: script, build: false })).rejects.toThrow(/extractor failed/);
     const r3 = new FakeRunner(handler("{}", { extract: { timedOut: true } }));
     await expect(extractProject({ project, runner: r3, env, scriptPath: script, build: false })).rejects.toThrow(/timed out/);
+  });
+
+  it("passes every library name as --local-prefix by default, and explicit prefixes instead when given", async () => {
+    const project = { ...fakeProject(dir), libs: [{ name: "Toy", srcDir: null, roots: [], globs: ["Toy.+"] }] };
+    const runner = new FakeRunner(handler(JSON.stringify(loadToyGraph())));
+    await extractProject({ project, runner, env, scriptPath: script, build: false, roots: ["Toy.Main"] });
+    const args = runner.calls[0]?.args ?? [];
+    expect(args.filter((_, i) => args[i - 1] === "--local-prefix")).toEqual(["Toy"]);
+    await extractProject({ project, runner, env, scriptPath: script, build: false, roots: ["Toy.Main"], localPrefixes: ["Toy.Main"] });
+    const args2 = runner.calls[1]?.args ?? [];
+    expect(args2.filter((_, i) => args2[i - 1] === "--local-prefix")).toEqual(["Toy.Main"]);
+  });
+
+  it("fails before running the extractor when a root module has no .olean", async () => {
+    const project = fakeProject(dir);
+    const runner = new FakeRunner(handler(JSON.stringify(loadToyGraph())));
+    const err = await extractProject({ project, runner, env, scriptPath: script, build: false, roots: ["YMEYM"] }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ExtractError);
+    expect((err as Error).message).toMatch(/No \.olean for root module YMEYM/);
+    expect((err as Error).message).toMatch(/--root/);
+    expect(runner.calls).toHaveLength(0);
+    // Core modules live in the toolchain, not the project: not checked.
+    await extractProject({ project, runner, env, scriptPath: script, build: false, roots: ["Init.Core"] });
+    expect(runner.calls).toHaveLength(1);
   });
 
   it("materialises a template that contains the imports marker", async () => {

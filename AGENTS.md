@@ -58,6 +58,16 @@ The audience is someone auditing a formalization (their own, a collaborator's, o
   `importModules #[{module := `Root}] {} 0` to obtain the environment.
 - Windows paths: prefer forward slashes internally; quote every path passed to a subprocess; never rely
   on a POSIX shell. Node `child_process.spawn` with an args array, `shell: false`.
+- Mathlib-scale measurements (2026-09-27, Windows 11, one machine): a real 50-module project over
+  Mathlib on Lean 4.33 (`YM_and_EYM/formal/lean`): import of 4648 modules 10 s, 34 104 reachable
+  constants, 760 k kernel edges, 4507 nodes written, 29 s total, `graph.json` 7.8 MB.
+  `examples/mathlib-demo` on Lean 4.35.0-rc3 + Mathlib `v4.35.0-rc3`: extract 15 s;
+  `verify MathlibDemo.sqrt_two_irrational` with all six checkers: closure 10 410 declarations, export
+  41 MB in 6.5 s, every checker accepted in 1.5 to 7.2 s, 23 s wall.
+- Toolchains before v4.35 ship `leanchecker` only (verified: v4.33.0 has no `leanexport`, no external
+  kernels, and its `leanchecker` has no `--from-export`). The `leanchecker-module` fallback (module
+  replay from `.olean`) is the only kernel-level check available there. `leanprover/lean4export` has a tag
+  per toolchain version, so building it on demand is a possible future upgrade.
 - Verified end to end on 2026-09-27: `proofflow extract` on `examples/toy` in 4 s (288 nodes),
   `proofflow verify Toy.cleanMain --checkers all` accepted by all six checkers in 1.4 s, and the viewer
   drove a live verification through the API (SSE) in headless Chrome. `con-leche`/`con-ron` decline

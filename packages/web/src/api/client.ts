@@ -88,7 +88,8 @@ export async function fetchCheckers(): Promise<CheckerInfo[]> {
   const json = await requestJson(`${API}/checkers`);
   const arr = Array.isArray(json) ? json : json && typeof json === "object" && Array.isArray((json as { checkers?: unknown }).checkers) ? (json as { checkers: unknown[] }).checkers : [];
   return arr.flatMap((c) => {
-    const r = CheckerInfoSchema.safeParse(c);
+    // Tolerate servers that predate `note` rather than dropping every checker.
+    const r = CheckerInfoSchema.safeParse(c && typeof c === "object" && !("note" in c) ? { ...c, note: null } : c);
     return r.success ? [r.data] : [];
   });
 }

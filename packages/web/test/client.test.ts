@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Job } from "@proofflow/schema";
 import {
   ApiError,
+  fetchCheckers,
   fetchGraph,
   fetchResults,
   parseGraphFile,
@@ -66,6 +67,26 @@ describe("graph loading", () => {
     const r = parseGraphFile({ meta: {}, nodes: [] });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.issues.length).toBeGreaterThan(0);
+  });
+});
+
+describe("checkers", () => {
+  it("parses checker info with notes, including the module-replay fallback", async () => {
+    mockFetch({
+      "/api/checkers": () =>
+        json([
+          { checker: "leanchecker", available: false, path: null, version: null, level: "L1", note: "leanexport is missing (Lean < 4.35)." },
+          { checker: "leanchecker-module", available: true, path: "C:/elan/bin/leanchecker", version: "4.30.0", level: "L1", note: "Replays the whole module." },
+          { checker: "nanoda", available: true, path: "C:/x/nanoda_bin", version: null, level: "L2" },
+          { checker: "bogus", available: true },
+        ]),
+    });
+    const cs = await fetchCheckers();
+    expect(cs.map((c) => [c.checker, c.available, c.note])).toEqual([
+      ["leanchecker", false, "leanexport is missing (Lean < 4.35)."],
+      ["leanchecker-module", true, "Replays the whole module."],
+      ["nanoda", true, null],
+    ]);
   });
 });
 

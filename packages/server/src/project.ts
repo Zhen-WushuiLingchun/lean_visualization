@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -13,6 +13,8 @@ export interface LeanLib {
   srcDir: string | null;
   /** Root modules as declared; empty when the lakefile does not list them (Lake then uses `name`). */
   roots: string[];
+  /** Lake globs as written: `Mod` (one), `Mod.+` (submodules), `Mod.*` (Mod and submodules). */
+  globs: string[];
 }
 
 export interface ProjectInfo {
@@ -24,8 +26,15 @@ export interface ProjectInfo {
   name: string;
   lakefile: { kind: "toml" | "lean"; path: string };
   libs: LeanLib[];
-  /** Root modules to import by default: each library's roots, or its name when none are listed. */
+  /** Package-level `srcDir`, or null. Library `srcDir`s are relative to it. */
+  srcDir: string | null;
+  /**
+   * Root modules to import by default, per Lake: a library's `roots` if declared, else its
+   * `globs` expanded against its source directory, else its name.
+   */
   defaultRoots: string[];
+  /** Module prefixes treated as local by default: every library name, plus roots outside them. */
+  defaultLocalPrefixes: string[];
   /** Contents of `lean-toolchain`, trimmed, or null. */
   toolchain: string | null;
   /** Parsed `lake-manifest.json`, or null. */
@@ -309,7 +318,17 @@ export function parseLakefileLean(text: string): LakefileInfo {
         )
       : [];
     const srcDirM = /\bsrcDir\s*:=\s*"([^"]*)"/.exec(block);
-    libs.push({ name, srcDir: srcDirM ? (srcDirM[1] ?? null) : null, roots });
+    // globs := #[.submodules `Foo, .andSubmodules `Bar, .one `Baz, Glob.submodules `Qux]
+    const globsM = /\bglobs\s*:=\s*#\[([^\]]*)\]/.exec(block);
+    const globs = globsM
+      ? [...(globsM[1] ?? "").matchAll(/\.(one|submodules|andSubmodules)\s+`((?:«[^»]+»|[^\s,\]`.«]+)(?:\.(?:«[^»]+»|[^\s,\]`.«]+))*)/g)].map(
+          (g) => {
+            const mod = unescapeLeanIdent(g[2] ?? "");
+            return g[1] === "submodules" ? `${mod}.+` : g[1] === "andSubmodules" ? `${mod}.*` : mod;
+          },
+        )
+      : [];
+    libs.push({ name, srcDir: srcDirM ? (srcDirM[1] ?? null) : null, roots, globs });
   }
   let pkgSrcDir: string | null = null;
   if (pkg) {
@@ -338,18 +357,116 @@ export function parseLakefileToml(text: string): LakefileInfo {
     if (!t.isArray || t.name !== "lean_lib") continue;
     const name = asString(t.values["name"]);
     if (!name) continue;
-    libs.push({ name, srcDir: asString(t.values["srcDir"]), roots: asStringArray(t.values["roots"]) });
+    libs.push({
+      name,
+      srcDir: asString(t.values["srcDir"]),
+      roots: asStringArray(t.values["roots"]),
+      globs: asStringArray(t.values["globs"]),
+    });
   }
   return { name: asString(doc.top["name"]), srcDir: asString(doc.top["srcDir"]), libs };
 }
 
-/** Each library's roots, or its name when none are listed (Lake's default), deduplicated. */
-export function defaultRootsOf(libs: readonly LeanLib[]): string[] {
+const PLAIN_COMPONENT = /^[A-Za-z_À-￿][\w'!?À-￿]*$/;
+
+/** File path components → module name, escaping components that need «». */
+export function moduleNameOf(components: readonly string[]): string {
+  return components.map((c) => (PLAIN_COMPONENT.test(c) ? c : `«${c}»`)).join(".");
+}
+
+/** Module name → path components (`Foo.«Bar baz».X` → `["Foo", "Bar baz", "X"]`). */
+export function moduleComponents(mod: string): string[] {
   const out: string[] = [];
-  for (const lib of libs) {
-    for (const r of lib.roots.length > 0 ? lib.roots : [lib.name]) if (!out.includes(r)) out.push(r);
+  const re = /«([^»]*)»|([^.]+)/g;
+  for (const m of mod.matchAll(re)) out.push(m[1] ?? m[2] ?? "");
+  return out;
+}
+
+/** Every `.lean` file under `dir` (recursively, skipping `.lake` and hidden dirs) as module names. */
+function submodulesUnder(dir: string, prefix: readonly string[]): string[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    if (e.isDirectory()) out.push(...submodulesUnder(path.join(dir, e.name), [...prefix, e.name]));
+    else if (e.isFile() && e.name.endsWith(".lean")) out.push(moduleNameOf([...prefix, e.name.slice(0, -5)]));
   }
   return out;
+}
+
+/**
+ * Expand one Lake glob against a library source directory: `Mod` = exactly Mod, `Mod.+` = every
+ * submodule under `Mod/` (not Mod itself), `Mod.*` = Mod (when `Mod.lean` exists) and its submodules.
+ */
+export function expandGlob(glob: string, srcRoot: string): string[] {
+  const g = glob.trim();
+  const kind = g.endsWith(".+") ? "sub" : g.endsWith(".*") ? "and" : "one";
+  const mod = kind === "one" ? g : g.slice(0, -2);
+  if (kind === "one") return [mod];
+  const comps = moduleComponents(mod);
+  const subs = submodulesUnder(path.join(srcRoot, ...comps), comps).sort();
+  if (kind === "and" && existsSync(path.join(srcRoot, ...comps) + ".lean")) return [mod, ...subs];
+  return subs;
+}
+
+/** Source directory of a library: `<project>/<package srcDir>/<lib srcDir>`. */
+export function libSourceRoot(projectDir: string, pkgSrcDir: string | null, lib: Pick<LeanLib, "srcDir">): string {
+  return path.resolve(projectDir, pkgSrcDir ?? ".", lib.srcDir ?? ".");
+}
+
+/** Lake semantics: `roots` if declared, else expanded `globs`, else the library name. Deduplicated. */
+export function defaultRootsOf(libs: readonly LeanLib[], projectDir = ".", pkgSrcDir: string | null = null): string[] {
+  const out: string[] = [];
+  for (const lib of libs) {
+    let mods: string[];
+    if (lib.roots.length > 0) mods = lib.roots;
+    else if (lib.globs.length > 0) {
+      const root = libSourceRoot(projectDir, pkgSrcDir, lib);
+      mods = lib.globs.flatMap((g) => expandGlob(g, root));
+    } else mods = [lib.name];
+    for (const r of mods) if (!out.includes(r)) out.push(r);
+  }
+  return out;
+}
+
+/** True when `prefix` is a component-wise prefix of `mod` (`Foo` covers `Foo` and `Foo.Bar`, not `FooBar`). */
+export function isModulePrefix(prefix: string, mod: string): boolean {
+  return mod === prefix || mod.startsWith(`${prefix}.`);
+}
+
+/** Every library name, plus any root not already covered by one of them. */
+export function defaultLocalPrefixesOf(libs: readonly LeanLib[], roots: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const lib of libs) if (!out.includes(lib.name)) out.push(lib.name);
+  for (const r of roots) if (!out.some((p) => isModulePrefix(p, r))) out.push(r);
+  return out;
+}
+
+/**
+ * Where Lake puts a module's `.olean`: the project's build dir, then each dependency's, then the
+ * toolchain's `lib/lean` when `toolchainPrefix` is given. Null when none exists.
+ */
+export function locateOlean(projectDir: string, mod: string, toolchainPrefix?: string | null): string | null {
+  const rel = `${path.join(...moduleComponents(mod))}.olean`;
+  const bases = [path.join(projectDir, ".lake", "build", "lib", "lean"), path.join(projectDir, ".lake", "build", "lib")];
+  try {
+    for (const e of readdirSync(path.join(projectDir, ".lake", "packages"), { withFileTypes: true })) {
+      if (e.isDirectory()) bases.push(path.join(projectDir, ".lake", "packages", e.name, ".lake", "build", "lib", "lean"));
+    }
+  } catch {
+    /* no dependencies */
+  }
+  if (toolchainPrefix) bases.push(path.join(toolchainPrefix, "lib", "lean"));
+  for (const b of bases) {
+    const f = path.join(b, rel);
+    if (existsSync(f)) return f;
+  }
+  return null;
 }
 
 export async function detectProject(dir: string, opts: DetectOptions = {}): Promise<ProjectInfo> {
@@ -381,13 +498,16 @@ export async function detectProject(dir: string, opts: DetectOptions = {}): Prom
       manifest = null;
     }
   }
+  const defaultRoots = defaultRootsOf(info.libs, abs, info.srcDir);
   return {
     dir: abs,
     dirPosix: toPosix(abs),
     name: info.name ?? path.basename(abs),
     lakefile,
     libs: info.libs,
-    defaultRoots: defaultRootsOf(info.libs),
+    srcDir: info.srcDir,
+    defaultRoots,
+    defaultLocalPrefixes: defaultLocalPrefixesOf(info.libs, defaultRoots),
     toolchain,
     manifest,
     stateDir: opts.stateDir ? path.resolve(opts.stateDir) : path.join(abs, ".proofflow"),

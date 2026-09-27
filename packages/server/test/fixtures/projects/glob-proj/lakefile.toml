@@ -1,0 +1,14 @@
+name = "globby"
+defaultTargets = ["Glob"]
+
+# Like YMEYM: no Glob.lean root, every submodule is part of the library.
+[[lean_lib]]
+name = "Glob"
+globs = ["Glob.+"]
+
+[[lean_lib]]
+name = "Extras"
+globs = [
+  "Other.*", # Other and its submodules
+  "Single",
+]

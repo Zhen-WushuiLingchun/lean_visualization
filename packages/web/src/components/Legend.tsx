@@ -1,4 +1,7 @@
+import { L1_CHECKERS, L2_CHECKERS } from "@proofflow/schema";
 import { BORDER_PALETTE, KIND_PALETTE, type BorderKey, type KindColorKey } from "../graph/colors";
+import { CHECKER_INFO } from "../graph/trust";
+import { useApp } from "../state/appState";
 import { VerifyBadge } from "./Badges";
 
 function EdgeSample({ site }: { site: "stmt" | "proof" | "both" | "axiom" }) {
@@ -7,6 +10,31 @@ function EdgeSample({ site }: { site: "stmt" | "proof" | "both" | "axiom" }) {
     <svg width="34" height="10" aria-hidden="true">
       <line x1="2" y1="5" x2="32" y2="5" stroke="currentColor" strokeWidth={site === "both" ? 2.8 : 1.4} strokeDasharray={dash} strokeLinecap={site === "axiom" ? "round" : undefined} />
     </svg>
+  );
+}
+
+/** Checkers with their level and, when the server answered /api/checkers, availability and note. */
+function CheckerLegend() {
+  const { checkers } = useApp();
+  return (
+    <>
+      <h2>Checkers</h2>
+      {[...L1_CHECKERS, ...L2_CHECKERS].map((c) => {
+        const info = CHECKER_INFO[c];
+        const server = checkers?.find((i) => i.checker === c);
+        const state = checkers ? (server?.available ? "available" : "not installed") : null;
+        return (
+          <div key={c} className="pf-legend__checker" title={server?.note ? `${info.explain}\n${server.note}` : info.explain}>
+            <div>
+              <code>{c}</code> <span className="pf-muted">{info.level}</span>
+              {info.label && <span className="pf-muted">, {info.label}</span>}
+              {state && <span className={server?.available ? "pf-muted" : "pf-warn-text"}>, {state}</span>}
+            </div>
+            {server?.note && <div className="pf-muted pf-small">{server.note}</div>}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -54,6 +82,7 @@ export function Legend() {
         <EdgeSample site="axiom" /> Axiom reached through an unexpanded external
       </div>
       <p className="pf-note">Edge colour is the colour of the dependency. External nodes are muted and italic. Auto-generated nodes are drawn at 70 %.</p>
+      <CheckerLegend />
     </div>
   );
 }

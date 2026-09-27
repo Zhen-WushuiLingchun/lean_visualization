@@ -95,7 +95,22 @@ const STATUS_BADGE: Record<string, BadgeKind> = {
   unavailable: "dash",
 };
 
-function CheckerRow({ name, row, requested, running, availability }: { name: CheckerName; row: CheckerResult | undefined; requested: boolean; running: boolean; availability: boolean | null }) {
+function CheckerRow({
+  name,
+  row,
+  requested,
+  running,
+  availability,
+  note,
+}: {
+  name: CheckerName;
+  row: CheckerResult | undefined;
+  requested: boolean;
+  running: boolean;
+  availability: boolean | null;
+  /** `CheckerInfo.note` from the server: why it is unavailable, or what it checks instead. */
+  note: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const info = CHECKER_INFO[name];
   let status: string;
@@ -113,12 +128,14 @@ function CheckerRow({ name, row, requested, running, availability }: { name: Che
   return (
     <>
       <tr>
-        <td title={info.explain}>
+        <td title={note ? `${info.explain}\n${note}` : info.explain}>
           {name} <span className="pf-muted pf-small">{info.level}</span>
+          {info.label && <div className="pf-muted pf-small">{info.label}</div>}
+          {note && <div className="pf-muted pf-small pf-checker-note">{note}</div>}
         </td>
         <td>
-          <span className="pf-status-cell">
-            <VerifyBadge inline badge={{ kind: badge, label: status, reason: row ? `exit ${row.exitCode ?? "none"}` : status }} />
+          <span className="pf-status-cell" title={status === "not installed" && note ? note : undefined}>
+            <VerifyBadge inline badge={{ kind: badge, label: status, reason: row ? `exit ${row.exitCode ?? "none"}` : (note ?? status) }} />
             {status}
           </span>
         </td>
@@ -190,8 +207,24 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
 
   const disabledReason = !serverMode ? STANDALONE_REASON : null;
   const coneBusy = coneRun !== null && !coneRun.finished;
-  const availability = (c: CheckerName): boolean | null => (checkers ? (checkers.find((i) => i.checker === c)?.available ?? false) : null);
-  const requested = new Set<CheckerName>(st.job?.checkers ?? []);
+  const infoOf = (c: CheckerName) => checkers?.find((i) => i.checker === c);
+  const availability = (c: CheckerName): boolean | null => (checkers ? (infoOf(c)?.available ?? false) : null);
+  // Requests come from /api/checkers (`checkers` in context re-renders this panel when it arrives).
+  const kernelReq = verify.kernelRequest();
+  const allReq = verify.allRequest();
+  const kernelOff = disabledReason ?? verify.kernelUnavailable();
+  const allOff = disabledReason ?? verify.allUnavailable();
+  const coneOff = coneAll ? allOff : kernelOff;
+  const kernelNames = Array.isArray(kernelReq) ? kernelReq.join(", ") : "the server's default kernel checker";
+  const jobReq = st.job?.checkers;
+  const isRequested = (c: CheckerName): boolean =>
+    jobReq === undefined
+      ? false
+      : jobReq === "all"
+        ? availability(c) !== false
+        : jobReq === null
+          ? (L1_CHECKERS as readonly string[]).includes(c) && availability(c) !== false
+          : jobReq.includes(c);
 
   return (
     <section>
@@ -202,17 +235,28 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
       </div>
       {badge.kind !== "none" && badge.kind !== "running" && <p className="pf-note">{badge.reason}</p>}
       <div className="pf-verify-buttons" style={{ marginTop: 6 }}>
-        <button type="button" className="pf-primary" disabled={!!disabledReason || running} title={disabledReason ?? `L1: ${LEVEL_INFO.L1}`} onClick={() => void verify.verify(node.id, verify.kernelCheckers())}>
+        <button
+          type="button"
+          className="pf-primary"
+          disabled={!!kernelOff || running}
+          title={kernelOff ?? `L1 with ${kernelNames}. ${LEVEL_INFO.L1}`}
+          onClick={() => void verify.verify(node.id, kernelReq)}
+        >
           Verify (kernel)
         </button>
-        <button type="button" disabled={!!disabledReason || running} title={disabledReason ?? `L1 + L2: ${LEVEL_INFO.L2}`} onClick={() => void verify.verify(node.id, verify.allCheckers())}>
+        <button
+          type="button"
+          disabled={!!allOff || running}
+          title={allOff ?? `L1 + L2 with ${Array.isArray(allReq) ? allReq.join(", ") : "every available checker"}. ${LEVEL_INFO.L2}`}
+          onClick={() => void verify.verify(node.id, allReq)}
+        >
           Verify (all checkers)
         </button>
         <button
           type="button"
-          disabled={!!disabledReason || coneBusy || coneDecls.length === 0}
-          title={disabledReason ?? (coneDecls.length === 0 ? "This node is not in the displayed cone." : "Verify this node and its local dependencies in the displayed cone, dependencies first, one at a time.")}
-          onClick={() => void verify.runCone(coneDecls, coneAll ? verify.allCheckers() : verify.kernelCheckers(), reuse)}
+          disabled={!!coneOff || coneBusy || coneDecls.length === 0}
+          title={coneOff ?? (coneDecls.length === 0 ? "This node is not in the displayed cone." : "Verify this node and its local dependencies in the displayed cone, dependencies first, one at a time.")}
+          onClick={() => void verify.runCone(coneDecls, coneAll ? allReq : kernelReq, reuse)}
         >
           Verify cone ({coneDecls.length})
         </button>
@@ -261,17 +305,33 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
           </thead>
           <tbody>
             {[...L1_CHECKERS, ...L2_CHECKERS].map((c) => (
-              <CheckerRow key={c} name={c} row={result?.checkers.find((r) => r.checker === c)} requested={requested.has(c)} running={running} availability={availability(c)} />
+              <CheckerRow
+                key={c}
+                name={c}
+                row={result?.checkers.find((r) => r.checker === c)}
+                requested={isRequested(c)}
+                running={running}
+                availability={availability(c)}
+                note={infoOf(c)?.note ?? null}
+              />
             ))}
           </tbody>
         </table>
       </div>
       {result && (
         <p className="pf-note">
-          Verified {new Date(result.verifiedAt).toLocaleString()} on Lean {result.leanVersion}. Export <code title={result.exportHash}>{result.exportHash.slice(0, 12)}</code> from{" "}
-          <code>{result.module}</code>, {fmtBytes(result.exportBytes)}
-          {result.exportDecls !== null && `, ${result.exportDecls} declarations`}, exported in {fmtMs(result.exportDurationMs)}. Server verdict: {result.verdict}. Rows only
-          speak for the checker that produced them.
+          Verified {new Date(result.verifiedAt).toLocaleString()} on Lean {result.leanVersion}.{" "}
+          {result.exportDecls === null ? (
+            <>
+              Module replay of <code>{result.module}</code> (imports trusted, hash <code title={result.exportHash}>{result.exportHash.slice(0, 12)}</code>).
+            </>
+          ) : (
+            <>
+              Export <code title={result.exportHash}>{result.exportHash.slice(0, 12)}</code> from <code>{result.module}</code>, {fmtBytes(result.exportBytes)}, {result.exportDecls}{" "}
+              declarations, exported in {fmtMs(result.exportDurationMs)}.
+            </>
+          )}{" "}
+          Server verdict: {result.verdict}. Rows only speak for the checker that produced them.
         </p>
       )}
       {st.job && (st.job.log.length > 0 || running) && (
@@ -296,7 +356,10 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
           <b>L2</b> {LEVEL_INFO.L2}
         </p>
         <p className="pf-note">{LEVEL_INFO.none}</p>
-        <p className="pf-note">A green badge needs the kernel (L1) and every other requested checker to accept. Taints are shown regardless: a sorry proof can still be kernel-accepted.</p>
+        <p className="pf-note">
+          A green badge needs a kernel replay (L1: leanchecker, or leanchecker-module on older toolchains) and every other requested checker to accept. Taints are shown
+          regardless: a sorry proof can still be kernel-accepted.
+        </p>
       </details>
     </section>
   );

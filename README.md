@@ -15,11 +15,29 @@ how it differs from Lean Atlas, LeanDepViz, lean-graph, leanviz, axiom-audit and
 
 ## Requirements
 
-- A Lean 4 project built with `lake build` on toolchain `v4.35.0-rc3` or newer (older toolchains still
-  get the graph and the L0 trust profile, but only checkers present in the toolchain can run).
+- A Lean 4 project built with `lake build`. On toolchain `v4.35.0-rc3` or newer every bundled checker
+  is available. On older toolchains (≥ 4.28) you still get the graph, the trust profile, and a kernel
+  replay of each node's module (`leanchecker <Module>`), but no per-declaration export or external kernels.
 - Node.js 22+ and pnpm 10+.
 
+## Measured (2026-09-27, one Windows machine)
+
+| Project | Extract | Verify one theorem, six checkers |
+|---|---|---|
+| `examples/toy` (288 nodes) | 4 s | 1.4 s |
+| `examples/mathlib-demo` (6 local theorems over Mathlib, Lean 4.35.0-rc3) | 15 s | 23 s for `sqrt_two_irrational` (closure of 10 410 declarations, 41 MB export) |
+| a 50-module research project over Mathlib (Lean 4.33, 4507 nodes, 144 k edges) | 29 s | module replay only (toolchain has no `leanexport`) |
+
 ## Quick start
+
+One-click launchers (they install dependencies and build on first run, then open the web UI):
+
+```
+proofflow.cmd  D:\path\to\lean\project        (Windows; double-click for the bundled example)
+./proofflow.sh /path/to/lean/project          (Linux, macOS, Git Bash)
+```
+
+Manual equivalent:
 
 ```bash
 pnpm install
@@ -29,6 +47,7 @@ pnpm proofflow serve   --project path/to/lean/project --open
 ```
 
 Try it on the bundled example: `pnpm proofflow serve --project examples/toy --open`.
+`examples/mathlib-demo` is a small project over Mathlib (run `lake exe cache get` inside it first).
 
 ## Layout
 

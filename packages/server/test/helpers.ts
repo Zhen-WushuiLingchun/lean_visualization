@@ -78,11 +78,19 @@ export class FakeRunner implements Runner {
   }
 }
 
-/** A toolchain in a temp dir whose `bin/` holds empty stand-ins for the requested checkers. */
-export function fakeToolchain(root: string, available: readonly CheckerName[] = ALL_CHECKERS): Toolchain {
+/**
+ * A toolchain in a temp dir whose `bin/` holds empty stand-ins for the requested checkers, plus
+ * `leanexport` unless `leanexport: false` (a pre-4.35 toolchain).
+ */
+export function fakeToolchain(
+  root: string,
+  available: readonly CheckerName[] = ALL_CHECKERS,
+  opts: { leanexport?: boolean } = {},
+): Toolchain {
   const binDir = path.join(root, "toolchain", "bin");
   mkdirSync(binDir, { recursive: true });
   for (const c of available) writeFileSync(path.join(binDir, exeName(CHECKER_SPECS[c].binary)), "");
+  if (opts.leanexport !== false) writeFileSync(path.join(binDir, exeName("leanexport")), "");
   return {
     prefix: path.join(root, "toolchain"),
     binDir,
@@ -99,12 +107,22 @@ export function fakeProject(dir: string, stateDir = path.join(dir, ".proofflow")
     dirPosix: dir.replace(/\\/g, "/"),
     name: "toy",
     lakefile: { kind: "toml", path: path.join(dir, "lakefile.toml") },
-    libs: [{ name: "Toy", srcDir: null, roots: [] }],
+    libs: [{ name: "Toy", srcDir: null, roots: [], globs: [] }],
+    srcDir: null,
     defaultRoots: ["Toy"],
+    defaultLocalPrefixes: ["Toy"],
     toolchain: "leanprover/lean4:v4.35.0-rc3",
     manifest: null,
     stateDir,
   };
+}
+
+/** Write a stand-in `.olean` at the Lake location for `mod`; returns its path. */
+export function fakeOlean(projectDir: string, mod: string, content = `olean of ${mod}`): string {
+  const file = path.join(projectDir, ".lake", "build", "lib", "lean", ...mod.split(".")) + ".olean";
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, content);
+  return file;
 }
 
 export const EXPORT_META =
@@ -125,6 +143,8 @@ export function fakeExport(decl: string): string {
 /** Standard replies for each checker's success, per docs/CHECKERS.md. */
 export const ACCEPT: Record<CheckerName, FakeReply> = {
   leanchecker: { exitCode: 0, stdout: "Lean default kernel accepts the solution\n" },
+  // Module replay is silent on success (verified).
+  "leanchecker-module": { exitCode: 0 },
   "leanchecker-paranoid": { exitCode: 0, stdout: "Lean default kernel accepts the solution\n" },
   lean4lean: { exitCode: 0, stdout: "checked 38 declarations\n" },
   nanoda: { exitCode: 0 },
@@ -143,6 +163,9 @@ export function pipelineHandler(
   replies: Partial<Record<CheckerName, FakeReply>> = {},
 ): FakeHandler {
   return ({ cmd, args }) => {
+    if (cmd === toolchain.lake && args[0] === "env" && args[1] === "leanchecker") {
+      return replies["leanchecker-module"] ?? ACCEPT["leanchecker-module"];
+    }
     if (cmd === toolchain.lake && args[1] === "leanexport") {
       const decl = args[args.length - 1] ?? "";
       return { exitCode: 0, stdout: fakeExport(decl) };

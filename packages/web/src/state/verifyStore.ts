@@ -11,10 +11,18 @@ import { badgeOf, effectiveResult, NO_BADGE, RUNNING_BADGE, type Badge } from ".
 type JobStatus = Job["status"];
 export type JobPhase = "posting" | JobStatus;
 
+/**
+ * What a verify request asks for: an explicit list of available checkers, `"all"` (the server
+ * resolves it to every available checker; used only when availability is unknown), or `null` to
+ * omit the field and let the server use its L1 default (also only when availability is unknown).
+ * Unavailable checker names are never sent.
+ */
+export type CheckerRequest = CheckerName[] | "all" | null;
+
 export interface JobView {
   id: string | null;
   status: JobPhase;
-  checkers: CheckerName[];
+  checkers: CheckerRequest;
   log: string[];
   error: string | null;
 }
@@ -31,7 +39,7 @@ export interface ConeRun {
   done: number;
   reused: number;
   current: string | null;
-  checkers: CheckerName[];
+  checkers: CheckerRequest;
   finished: boolean;
   cancelled: boolean;
   outcomes: Record<Badge["kind"], number>;
@@ -115,15 +123,45 @@ export class VerifyStore {
     return b;
   }
 
-  /** L1 only. */
-  kernelCheckers(): CheckerName[] {
-    return [...L1_CHECKERS];
+  /** Server-reported info for a checker, when /api/checkers answered. */
+  info(c: CheckerName): CheckerInfo | undefined {
+    return this.checkers?.find((i) => i.checker === c);
   }
 
-  /** L1 plus every L2 checker the server reports as available (all of them if unknown). */
-  allCheckers(): CheckerName[] {
-    const l2 = this.checkers ? L2_CHECKERS.filter((c) => this.checkers?.some((i) => i.checker === c && i.available)) : [...L2_CHECKERS];
-    return [...L1_CHECKERS, ...l2];
+  /** `true`/`false` from /api/checkers, `null` when availability is unknown. */
+  available(c: CheckerName): boolean | null {
+    if (!this.checkers) return null;
+    return this.info(c)?.available ?? false;
+  }
+
+  /**
+   * "Verify (kernel)": the L1 checkers the server reports as available (normally `leanchecker`,
+   * `leanchecker-module` on toolchains without leanexport). `null` when unknown (server default).
+   */
+  kernelRequest(): CheckerRequest {
+    if (!this.checkers) return null;
+    return L1_CHECKERS.filter((c) => this.available(c) === true);
+  }
+
+  /** "Verify (all checkers)": every available L1 and L2 checker, or `"all"` when unknown. */
+  allRequest(): CheckerRequest {
+    if (!this.checkers) return "all";
+    return [...L1_CHECKERS, ...L2_CHECKERS].filter((c) => this.available(c) === true);
+  }
+
+  /** Why kernel verification cannot run (the server's notes), or null when it can. */
+  kernelUnavailable(): string | null {
+    const req = this.kernelRequest();
+    if (req === null || req === "all" || req.length > 0) return null;
+    const notes = L1_CHECKERS.map((c) => this.info(c)?.note).filter((n): n is string => !!n);
+    return notes.length > 0 ? notes.join(" ") : "No kernel checker is available in the active toolchain.";
+  }
+
+  /** Why no verification at all can run, or null. */
+  allUnavailable(): string | null {
+    const req = this.allRequest();
+    if (req === null || req === "all" || req.length > 0) return null;
+    return this.kernelUnavailable() ?? "No checker is available in the active toolchain.";
   }
 
   reset(): void {
@@ -191,7 +229,7 @@ export class VerifyStore {
 
   // ---- verification jobs ----------------------------------------------------------------------
 
-  verify(decl: string, checkers: CheckerName[], force = false): Promise<VerifyResult | null> {
+  verify(decl: string, checkers: CheckerRequest, force = false): Promise<VerifyResult | null> {
     if (!this.enabled) return Promise.resolve(null);
     const existing = this.pending.get(decl);
     if (existing) return existing;
@@ -200,11 +238,15 @@ export class VerifyStore {
     return p;
   }
 
-  private async runJob(decl: string, checkers: CheckerName[], force: boolean): Promise<VerifyResult | null> {
+  private async runJob(decl: string, checkers: CheckerRequest, force: boolean): Promise<VerifyResult | null> {
     this.patch(decl, { job: { id: null, status: "posting", checkers, log: [], error: null } });
+    if (Array.isArray(checkers) && checkers.length === 0) {
+      this.patchJob(decl, { status: "failed", error: this.allUnavailable() ?? "No available checker was requested." });
+      return null;
+    }
     let start;
     try {
-      start = await postVerify({ decl, checkers, ...(force ? { force } : {}) });
+      start = await postVerify({ decl, ...(checkers !== null ? { checkers } : {}), ...(force ? { force } : {}) });
     } catch (e) {
       this.patchJob(decl, { status: "failed", error: e instanceof Error ? e.message : String(e) });
       return null;
@@ -249,7 +291,7 @@ export class VerifyStore {
    * Verify declarations one at a time, in the given (topological) order. With `reuseCached`, a
    * declaration whose newest cached result already covers every requested checker is skipped.
    */
-  async runCone(decls: readonly string[], checkers: CheckerName[], reuseCached = true): Promise<ConeRun | null> {
+  async runCone(decls: readonly string[], checkers: CheckerRequest, reuseCached = true): Promise<ConeRun | null> {
     if (!this.enabled || (this.coneRun && !this.coneRun.finished)) return null;
     const run: ConeRun = {
       total: decls.length,
@@ -300,15 +342,22 @@ export class VerifyStore {
   }
 }
 
+const DEFINITIVE = (status: string): boolean => status === "accepted" || status === "rejected" || status === "declined";
+
 /**
- * Does a result already answer every requested checker definitively? Same rule as the server's
- * cache reuse (docs/ARCHITECTURE.md section 3): accepted, rejected or declined.
+ * Does a result already answer a request definitively? Same rule as the server's cache reuse
+ * (docs/ARCHITECTURE.md section 3): accepted, rejected or declined. For requests resolved by the
+ * server (`null` = its L1 default, `"all"`), any kernel row counts, plus every L2 row for `"all"`.
  */
-export function covers(result: VerifyResult, checkers: readonly CheckerName[]): boolean {
-  return checkers.every((c) => {
-    const row = result.checkers.find((r) => r.checker === c);
-    return row !== undefined && (row.status === "accepted" || row.status === "rejected" || row.status === "declined");
+export function covers(result: VerifyResult, checkers: CheckerRequest): boolean {
+  const row = (c: CheckerName) => result.checkers.find((r) => r.checker === c && r.status !== "skipped");
+  const kernel = L1_CHECKERS.some((c) => {
+    const r = row(c);
+    return r !== undefined && DEFINITIVE(r.status);
   });
+  if (checkers === null) return kernel;
+  if (checkers === "all") return kernel && L2_CHECKERS.every((c) => row(c) !== undefined && (DEFINITIVE(row(c)?.status ?? "") || row(c)?.status === "unavailable"));
+  return checkers.length > 0 && checkers.every((c) => DEFINITIVE(row(c)?.status ?? ""));
 }
 
 export function useDeclVerify(store: VerifyStore, decl: string | null): DeclVerify {

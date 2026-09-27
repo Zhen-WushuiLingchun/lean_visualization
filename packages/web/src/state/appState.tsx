@@ -3,6 +3,7 @@ import type { CheckerInfo, GraphFile, Taint } from "@proofflow/schema";
 import type { ExternalMode, SiteFilter, ViewMode } from "../graph/cone";
 import type { KindColorKey } from "../graph/colors";
 import type { GraphIndex } from "../graph/graphIndex";
+import type { LayoutChoice } from "../graph/layout";
 import type { HighlightStore } from "./highlight";
 import type { VerifyStore } from "./verifyStore";
 
@@ -17,6 +18,14 @@ export interface ViewOptions {
   taintFilter: Taint[];
   /** Highlight only these header colours; empty means all. */
   kindFilter: KindColorKey[];
+  /** Layout engine: auto picks ELK for small cones and the fast layered layout for big ones. */
+  layoutChoice: LayoutChoice;
+}
+
+/** Set when the default view (all final theorems) was too big and only the first few are shown. */
+export interface Narrowed {
+  targets: string[];
+  total: number;
 }
 
 export interface TargetState {
@@ -31,7 +40,11 @@ export interface AppState {
   /** Why the server graph could not be loaded (shown on the landing panel). */
   loadError: string | null;
   graph: GraphFile | null;
+  /** Built once per loaded graph. */
+  index: GraphIndex | null;
+  /** All final theorems (local sinks). */
   defaultTargets: string[];
+  narrowed: Narrowed | null;
   mode: ViewMode;
   targets: string[];
   /** Previous target sets, oldest first (breadcrumb). */
@@ -47,6 +60,7 @@ export const DEFAULT_OPTIONS: ViewOptions = {
   site: "all",
   taintFilter: [],
   kindFilter: [],
+  layoutChoice: "auto",
 };
 
 export const initialState: AppState = {
@@ -55,7 +69,9 @@ export const initialState: AppState = {
   sourceLabel: "",
   loadError: null,
   graph: null,
+  index: null,
   defaultTargets: [],
+  narrowed: null,
   mode: "cone",
   targets: [],
   history: [],
@@ -64,7 +80,17 @@ export const initialState: AppState = {
 };
 
 export type Action =
-  | { type: "loaded"; graph: GraphFile; source: GraphSource; label: string; defaultTargets: string[] }
+  | {
+      type: "loaded";
+      graph: GraphFile;
+      index: GraphIndex;
+      source: GraphSource;
+      label: string;
+      defaultTargets: string[];
+      /** Targets to start with (the first few final theorems when all of them are too many). */
+      initialTargets: string[];
+      narrowed: Narrowed | null;
+    }
   | { type: "landing"; error: string | null }
   | { type: "unload" }
   | { type: "setTargets"; targets: string[] }
@@ -96,10 +122,12 @@ export function reducer(state: AppState, action: Action): AppState {
         ...initialState,
         phase: "ready",
         graph: action.graph,
+        index: action.index,
         source: action.source,
         sourceLabel: action.label,
         defaultTargets: action.defaultTargets,
-        targets: action.defaultTargets,
+        narrowed: action.narrowed,
+        targets: action.initialTargets,
       };
     case "landing":
       return { ...initialState, phase: "landing", loadError: action.error };

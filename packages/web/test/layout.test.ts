@@ -65,9 +65,9 @@ describe("layout", () => {
         nodes: cone.nodes.map((n) => ({ id: n.id, ...(sizes.get(n.id) ?? { width: 100, height: 50 }), layer: L.layer.get(n.id) ?? 0 })),
         edges: cone.edges,
       },
-      { engine: "main" },
+      { choice: "elk", elkThread: "main" },
     );
-    expect(res.engine).toBe("main");
+    expect(res.engine).toBe("elk-main");
     expect(res.positions.size).toBe(cone.nodes.length);
     for (const e of cone.edges) {
       const a = res.positions.get(e.source);

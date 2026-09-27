@@ -1,4 +1,5 @@
 import type { ELK, ElkNode, LayoutOptions } from "elkjs/lib/elk-api";
+import { fastLayered } from "./fastLayout";
 
 /**
  * ELK `layered` layout, direction RIGHT, with partitioning: each node's partition is its layer
@@ -27,7 +28,21 @@ export interface LayoutInput {
   edges: readonly LayoutEdgeInput[];
 }
 
-export type LayoutEngine = "worker" | "main";
+/** Which engine produced a layout. */
+export type LayoutEngine = "elk-worker" | "elk-main" | "fast";
+/** User choice in the toolbar. `auto` uses ELK up to `ELK_AUTO_LIMIT` nodes, the fast layout above. */
+export type LayoutChoice = "auto" | "elk" | "fast";
+/** ELK takes about 3 s at 300 nodes and 20 to 40 s at 1000 (measured); the fast layout stays under 0.2 s. */
+export const ELK_AUTO_LIMIT = 300;
+
+export function chooseEngine(choice: LayoutChoice, nodeCount: number): "elk" | "fast" {
+  if (choice === "elk" || choice === "fast") return choice;
+  return nodeCount <= ELK_AUTO_LIMIT ? "elk" : "fast";
+}
+
+export function engineLabel(engine: LayoutEngine): string {
+  return engine === "fast" ? "fast layout" : engine === "elk-worker" ? "ELK layout (worker)" : "ELK layout (main thread)";
+}
 
 export interface LayoutResult {
   positions: Map<string, { x: number; y: number }>;
@@ -198,16 +213,25 @@ function abortPromise(signal: AbortSignal | undefined): Promise<never> | null {
 
 export interface RunLayoutOptions {
   signal?: AbortSignal;
-  /** Force the main-thread engine (tests, or when workers are known not to work). */
-  engine?: LayoutEngine;
+  /** auto (default), elk or fast. */
+  choice?: LayoutChoice;
+  /** Run ELK on the main thread (tests, or when workers are known not to work). */
+  elkThread?: "worker" | "main";
 }
 
 export async function runLayout(input: LayoutInput, opts: RunLayoutOptions = {}): Promise<LayoutResult> {
+  if (chooseEngine(opts.choice ?? "auto", input.nodes.length) === "fast") {
+    const t0 = performance.now();
+    if (opts.signal?.aborted) throw new LayoutCancelled();
+    const res = fastLayered(input);
+    lastEngine = "fast";
+    return { ...res, engine: "fast", durationMs: performance.now() - t0 };
+  }
   const graph = toElkGraph(input);
   const layoutOptions = elkOptionsFor(input.nodes.length);
   const aborted = abortPromise(opts.signal);
   const t0 = performance.now();
-  const wantWorker = opts.engine !== "main" && !workerBroken && typeof Worker !== "undefined";
+  const wantWorker = opts.elkThread !== "main" && !workerBroken && typeof Worker !== "undefined";
 
   if (wantWorker) {
     try {
@@ -215,8 +239,8 @@ export async function runLayout(input: LayoutInput, opts: RunLayoutOptions = {})
       const race: Promise<ElkNode>[] = [w.elk.layout(graph, { layoutOptions }), w.failed];
       if (aborted) race.push(aborted);
       const res = await Promise.race(race);
-      lastEngine = "worker";
-      return fromElk(res, "worker", performance.now() - t0);
+      lastEngine = "elk-worker";
+      return fromElk(res, "elk-worker", performance.now() - t0);
     } catch (e) {
       if (e instanceof LayoutCancelled) {
         // The worker may still be busy with the stale graph: drop it, the next layout starts fresh.
@@ -238,6 +262,48 @@ export async function runLayout(input: LayoutInput, opts: RunLayoutOptions = {})
   const race: Promise<ElkNode>[] = [elk.layout(graph, { layoutOptions })];
   if (aborted) race.push(aborted);
   const res = await Promise.race(race);
-  lastEngine = "main";
-  return fromElk(res, "main", performance.now() - t0);
+  lastEngine = "elk-main";
+  return fromElk(res, "elk-main", performance.now() - t0);
+}
+
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Bounding box of laid-out nodes. */
+export function layoutBounds(positions: ReadonlyMap<string, { x: number; y: number }>, sizes: ReadonlyMap<string, { width: number; height: number }>): Bounds {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [id, p] of positions) {
+    const s = sizes.get(id) ?? { width: 0, height: 0 };
+    x0 = Math.min(x0, p.x);
+    y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x + s.width);
+    y1 = Math.max(y1, p.y + s.height);
+  }
+  if (!Number.isFinite(x0)) return { x: 0, y: 0, width: 0, height: 0 };
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+export const MIN_ZOOM = 0.02;
+export const FIT_MAX_ZOOM = 1.2;
+export const FIT_PADDING = 0.06;
+
+/**
+ * Viewport that fits `b` into a pane of `w` x `h` (same maths as xyflow's getViewportForBounds,
+ * kept here so the fit is a pure function we can test and apply with setViewport directly).
+ */
+export function fitViewportFor(b: Bounds, w: number, h: number, minZoom = MIN_ZOOM, maxZoom = FIT_MAX_ZOOM, padding = FIT_PADDING): { x: number; y: number; zoom: number } {
+  if (w <= 0 || h <= 0 || b.width <= 0 || b.height <= 0) return { x: 0, y: 0, zoom: 1 };
+  const zoomX = w / (b.width * (1 + 2 * padding));
+  const zoomY = h / (b.height * (1 + 2 * padding));
+  const zoom = Math.min(maxZoom, Math.max(minZoom, Math.min(zoomX, zoomY)));
+  const cx = b.x + b.width / 2;
+  const cy = b.y + b.height / 2;
+  return { x: w / 2 - cx * zoom, y: h / 2 - cy * zoom, zoom };
 }

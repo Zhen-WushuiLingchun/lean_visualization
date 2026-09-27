@@ -153,6 +153,17 @@ export async function digestFile(file: string): Promise<FileDigest> {
   return { sha256: s.stats.digest(), bytes: s.stats.bytes, decls: s.stats.decls, leanVersion: s.stats.leanVersion() };
 }
 
+/** Streaming sha256 and size of any file (used for `.olean` fingerprints). */
+export async function sha256File(file: string): Promise<{ sha256: string; bytes: number }> {
+  const hash = createHash("sha256");
+  let bytes = 0;
+  for await (const chunk of createReadStream(file)) {
+    hash.update(chunk as Buffer);
+    bytes += (chunk as Buffer).length;
+  }
+  return { sha256: hash.digest("hex"), bytes };
+}
+
 export class ExportError extends Error {
   override name = "ExportError";
   constructor(

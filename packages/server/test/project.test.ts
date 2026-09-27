@@ -5,8 +5,11 @@ import {
   ProjectError,
   ToolchainError,
   baseEnv,
+  defaultLocalPrefixesOf,
   defaultRootsOf,
   detectProject,
+  expandGlob,
+  locateOlean,
   exeName,
   parseLakefileLean,
   parseTomlSubset,
@@ -25,8 +28,8 @@ describe("detectProject: lakefile.toml", () => {
     expect(p.name).toBe("toy-toml");
     expect(p.lakefile.kind).toBe("toml");
     expect(p.libs).toEqual([
-      { name: "Toy", srcDir: null, roots: [] },
-      { name: "Extra", srcDir: "src/extra", roots: ["Extra.A", "Extra.B"] },
+      { name: "Toy", srcDir: null, roots: [], globs: [] },
+      { name: "Extra", srcDir: "src/extra", roots: ["Extra.A", "Extra.B"], globs: ["Extra.+"] },
     ]);
     expect(p.defaultRoots).toEqual(["Toy", "Extra.A", "Extra.B"]);
     expect(p.toolchain).toBe("leanprover/lean4:v4.35.0-rc3");
@@ -47,7 +50,7 @@ describe("detectProject: lakefile.lean", () => {
     expect(p.lakefile.kind).toBe("lean");
     expect(p.name).toBe("«toy lean»");
     expect(p.libs.map((l) => l.name)).toEqual(["Toy", "Extra"]);
-    expect(p.libs[1]).toEqual({ name: "Extra", srcDir: "extra", roots: ["Extra.A", "Extra.«B c»"] });
+    expect(p.libs[1]).toEqual({ name: "Extra", srcDir: "extra", roots: ["Extra.A", "Extra.«B c»"], globs: [] });
     expect(p.defaultRoots).toEqual(["Toy", "Extra.A", "Extra.«B c»"]);
     expect(p.toolchain).toBeNull();
     expect(p.manifest).toBeNull();
@@ -62,6 +65,79 @@ describe("detectProject: lakefile.lean", () => {
   it("fails clearly without a lakefile", async () => {
     await expect(detectProject(path.join(projects, "empty-proj"))).rejects.toBeInstanceOf(ProjectError);
     await expect(detectProject(path.join(projects, "does-not-exist"))).rejects.toThrow(/not found/);
+  });
+});
+
+describe("Lake globs (lean_lib without a root file, like YMEYM)", () => {
+  it("expands `Mod.+`, `Mod.*` and `Mod` against the library source dir", async () => {
+    const p = await detectProject(path.join(projects, "glob-proj"));
+    expect(p.libs.map((l) => [l.name, l.globs])).toEqual([
+      ["Glob", ["Glob.+"]],
+      ["Extras", ["Other.*", "Single"]],
+    ]);
+    // `Glob.+` excludes Glob itself (there is no Glob.lean) and non-.lean files; names needing «» get them.
+    expect(p.defaultRoots).toEqual(["Glob.A", "Glob.Sub.B", "Glob.«Weird Name»", "Other", "Other.C", "Single"]);
+    expect(p.defaultRoots).not.toContain("NotInLib");
+    // Every library name is a local prefix; roots outside them are added.
+    expect(p.defaultLocalPrefixes).toEqual(["Glob", "Extras", "Other", "Single"]);
+  });
+
+  it("skips .lake and hidden directories and honours srcDir", () => {
+    const dir = tempDir();
+    try {
+      for (const f of ["src/Lib/A.lean", "src/Lib/.lake/B.lean", "src/Lib/.hidden/C.lean", "src/Lib/D/E.lean"]) {
+        mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+        writeFileSync(path.join(dir, f), "");
+      }
+      expect(expandGlob("Lib.+", path.join(dir, "src"))).toEqual(["Lib.A", "Lib.D.E"]);
+      expect(expandGlob("Lib.*", path.join(dir, "src"))).toEqual(["Lib.A", "Lib.D.E"]); // no Lib.lean
+      expect(expandGlob("Lib", path.join(dir, "src"))).toEqual(["Lib"]);
+      expect(defaultRootsOf([{ name: "Lib", srcDir: "src", roots: [], globs: ["Lib.+"] }], dir)).toEqual(["Lib.A", "Lib.D.E"]);
+      // Declared roots win over globs.
+      expect(defaultRootsOf([{ name: "Lib", srcDir: "src", roots: ["Lib.A"], globs: ["Lib.+"] }], dir)).toEqual(["Lib.A"]);
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  it("parses globs in lakefile.lean", () => {
+    const info = parseLakefileLean("lean_lib Foo where\n  globs := #[.submodules `Foo, .andSubmodules `Bar, .one `Baz]\n");
+    expect(info.libs[0]?.globs).toEqual(["Foo.+", "Bar.*", "Baz"]);
+  });
+
+  it("local prefixes cover component-wise only", () => {
+    expect(defaultLocalPrefixesOf([{ name: "Foo", srcDir: null, roots: [], globs: [] }], ["Foo.A", "FooBar.B"])).toEqual([
+      "Foo",
+      "FooBar.B",
+    ]);
+  });
+});
+
+describe("locateOlean", () => {
+  it("finds the Lake build layout, then the fallback, then dependencies, then the toolchain", () => {
+    const dir = tempDir();
+    try {
+      const put = (rel: string): string => {
+        const f = path.join(dir, rel);
+        mkdirSync(path.dirname(f), { recursive: true });
+        writeFileSync(f, rel);
+        return f;
+      };
+      expect(locateOlean(dir, "Toy.Basic")).toBeNull();
+      const fallback = put(".lake/build/lib/Toy/Basic.olean");
+      expect(locateOlean(dir, "Toy.Basic")).toBe(fallback);
+      const main = put(".lake/build/lib/lean/Toy/Basic.olean");
+      expect(locateOlean(dir, "Toy.Basic")).toBe(main);
+      const dep = put(".lake/packages/mathlib/.lake/build/lib/lean/Mathlib/Logic/Basic.olean");
+      expect(locateOlean(dir, "Mathlib.Logic.Basic")).toBe(dep);
+      const core = put("toolchain/lib/lean/Init/Core.olean");
+      expect(locateOlean(dir, "Init.Core")).toBeNull();
+      expect(locateOlean(dir, "Init.Core", path.join(dir, "toolchain"))).toBe(core);
+      const weird = put(".lake/build/lib/lean/Glob/Weird Name.olean");
+      expect(locateOlean(dir, "Glob.«Weird Name»")).toBe(weird);
+    } finally {
+      removeDir(dir);
+    }
   });
 });
 
@@ -95,7 +171,7 @@ describe("TOML subset", () => {
   });
 
   it("defaults a library's roots to its name", () => {
-    expect(defaultRootsOf([{ name: "A", srcDir: null, roots: [] }, { name: "B", srcDir: null, roots: ["B.X", "A"] }])).toEqual([
+    expect(defaultRootsOf([{ name: "A", srcDir: null, roots: [], globs: [] }, { name: "B", srcDir: null, roots: ["B.X", "A"], globs: [] }])).toEqual([
       "A",
       "B.X",
     ]);

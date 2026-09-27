@@ -17,6 +17,7 @@ import { exeName } from "../src/project.js";
 import {
   FIXTURES,
   FakeRunner,
+  fakeOlean,
   fakeProject,
   fakeToolchain,
   loadToyGraph,
@@ -139,8 +140,8 @@ describe("HTTP API", () => {
   it("GET /api/checkers lists every checker with availability", async () => {
     const res = await app.request("/api/checkers");
     const infos = CheckerInfoSchema.array().parse(await res.json());
-    expect(infos).toHaveLength(6);
-    expect(infos.filter((i) => i.available).map((i) => i.checker)).toEqual(["leanchecker", "nanoda", "con-leche"]);
+    expect(infos).toHaveLength(7);
+    expect(infos.filter((i) => i.available).map((i) => i.checker)).toEqual(["leanchecker", "leanchecker-module", "nanoda", "con-leche"]);
   });
 
   it("POST /api/verify validates the body and the declaration", async () => {
@@ -191,6 +192,7 @@ describe("HTTP API", () => {
     const { jobId } = await json<{ jobId: string }>(res);
     const done = await jobs.wait(jobId);
     expect(done.status).toBe("done");
+    // leanexport exists, so "all" leaves out module replay (it can still be requested explicitly).
     expect(done.result?.checkers.map((c) => c.checker)).toEqual(["leanchecker", "nanoda", "con-leche"]);
     expect(done.result?.checkers.some((c) => c.status === "unavailable")).toBe(false);
     expect(done.result?.verdict).toBe("accepted");
@@ -201,6 +203,33 @@ describe("HTTP API", () => {
       headers: { "content-type": "application/json" },
     });
     expect(bad.status).toBe(400);
+  });
+
+  it("POST /api/verify without checkers uses module replay on a toolchain without leanexport", async () => {
+    const old = tempDir();
+    try {
+      const project = fakeProject(old);
+      mkdirSync(project.stateDir, { recursive: true });
+      writeFileSync(path.join(project.stateDir, "graph.json"), JSON.stringify(graph));
+      fakeOlean(old, "Toy.Basic");
+      const tc = fakeToolchain(old, ["leanchecker"], { leanexport: false });
+      const r = new FakeRunner(pipelineHandler(tc));
+      const a = createApp({ project, runner: r, jobs, toolchain: tc, webDist: null });
+      const infos = CheckerInfoSchema.array().parse(await (await a.request("/api/checkers")).json());
+      expect(infos.find((i) => i.checker === "leanchecker")?.note).toBe("needs leanexport (bundled from Lean 4.35)");
+      expect(infos.find((i) => i.checker === "leanchecker-module")?.available).toBe(true);
+      const res = await a.request("/api/verify", {
+        method: "POST",
+        body: JSON.stringify({ decl: "Toy.double" }),
+        headers: { "content-type": "application/json" },
+      });
+      const done = await jobs.wait((await json<{ jobId: string }>(res)).jobId);
+      expect(done.result?.checkers.map((c) => `${c.checker}:${c.status}`)).toEqual(["leanchecker-module:accepted"]);
+      expect(done.result?.exportDecls).toBeNull();
+      expect(r.calls.map((c) => c.args)).toEqual([["env", "leanchecker", "Toy.Basic"]]);
+    } finally {
+      removeDir(old);
+    }
   });
 
   it("GET /api/jobs/:id/events streams log lines and a final done event", async () => {
@@ -238,6 +267,7 @@ describe("HTTP API", () => {
     const lake = path.join(lakeDir, exeName("lake"));
     writeFileSync(lake, "", { mode: 0o755 });
     const script = path.join(dir, "Extract.lean");
+    fakeOlean(dir, "Toy");
     writeFileSync(script, "def main : IO Unit := pure ()\n");
     const small = loadToyGraph();
     small.nodes = small.nodes.filter((n) => n.id !== "Toy.main");
@@ -319,6 +349,7 @@ describe("extraction is exclusive with verification", () => {
     mkdirSync(lakeDir, { recursive: true });
     writeFileSync(path.join(lakeDir, exeName("lake")), "", { mode: 0o755 });
     const script = path.join(dir, "Extract.lean");
+    fakeOlean(dir, "Toy");
     writeFileSync(script, "def main : IO Unit := pure ()\n");
 
     const toolchain = fakeToolchain(dir, ["leanchecker"]);

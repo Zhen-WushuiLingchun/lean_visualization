@@ -8,6 +8,19 @@ describe("badgeOf", () => {
     expect(badgeOf(result([row("leanchecker", "accepted")])).kind).toBe("ok");
     expect(badgeOf(result([row("leanchecker", "accepted"), row("nanoda", "accepted"), row("con-ron", "skipped")])).kind).toBe("ok");
   });
+  it("accepts the module-replay fallback as the kernel check", () => {
+    const b = badgeOf(result([row("leanchecker-module", "accepted")], { exportDecls: null }));
+    expect(b.kind).toBe("ok");
+    expect(b.reason).toContain("module replay");
+    expect(badgeOf(result([row("leanchecker-module", "accepted"), row("nanoda", "accepted")])).kind).toBe("ok");
+    expect(badgeOf(result([row("leanchecker", "accepted"), row("leanchecker-module", "accepted")])).kind).toBe("ok");
+  });
+  it("needs every requested checker, including a second kernel checker", () => {
+    expect(badgeOf(result([row("leanchecker", "accepted"), row("leanchecker-module", "unavailable")])).kind).toBe("dash");
+    expect(badgeOf(result([row("leanchecker-module", "rejected"), row("leanchecker", "accepted")])).kind).toBe("rejected");
+    expect(badgeOf(result([row("leanchecker-module", "timeout")])).kind).toBe("error");
+    expect(badgeOf(result([row("leanchecker-module", "declined"), row("nanoda", "accepted")])).kind).toBe("dash");
+  });
   it("is never green without the kernel", () => {
     expect(badgeOf(result([row("lean4lean", "accepted")])).kind).toBe("dash");
     expect(badgeOf(result([row("leanchecker", "skipped"), row("nanoda", "accepted")])).kind).toBe("dash");
@@ -59,5 +72,10 @@ describe("effectiveResult", () => {
     expect(covers(r, ["leanchecker", "con-ron"])).toBe(false);
     expect(covers(result([row("leanchecker", "accepted"), row("con-leche", "declined")]), ["leanchecker", "con-leche"])).toBe(true);
     expect(covers(result([row("leanchecker", "unavailable")]), ["leanchecker"])).toBe(false);
+    // Server-resolved requests: any definitive kernel row answers the L1 default.
+    expect(covers(result([row("leanchecker-module", "accepted")]), null)).toBe(true);
+    expect(covers(result([row("nanoda", "accepted")]), null)).toBe(false);
+    expect(covers(result([row("leanchecker-module", "accepted")]), "all")).toBe(false);
+    expect(covers(result([row("leanchecker-module", "accepted"), ...(["leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron"] as const).map((c) => row(c, "unavailable"))]), "all")).toBe(true);
   });
 });

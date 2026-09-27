@@ -5,7 +5,7 @@ import { serve } from "@hono/node-server";
 import type { CheckerResult, GraphFile, VerifyResult } from "@proofflow/schema";
 import { Command, InvalidArgumentError } from "commander";
 import { createApp, DEFAULT_PORT, type ExtractDefaults, type VerifyDefaults } from "./api.js";
-import { listCheckers } from "./checkers.js";
+import { LEANEXPORT_NOTE, isExportBased, listCheckers } from "./checkers.js";
 import { DEFAULT_BUILD_TIMEOUT_MS, DEFAULT_EXTRACT_TIMEOUT_MS, extractProject } from "./extract.js";
 import { DEFAULT_EXPORT_TIMEOUT_MS, formatBytes, formatMs } from "./export.js";
 import { DEFAULT_CHECKER_TIMEOUT_MS } from "./checkers.js";
@@ -74,10 +74,10 @@ function printStats(graph: GraphFile, outPath: string, durationMs: number): void
   console.log(`axioms   ${s.axiomNodes.length ? s.axiomNodes.join(", ") : "none"}`);
 }
 
-function noteOf(r: CheckerResult): string {
+function noteOf(r: CheckerResult, noExport = false): string {
   if (r.status === "accepted" || r.status === "skipped") return "";
   if (r.rejectedDecl) return `at ${r.rejectedDecl}`;
-  if (r.status === "unavailable") return "binary not in toolchain";
+  if (r.status === "unavailable") return noExport && isExportBased(r.checker) ? LEANEXPORT_NOTE : "binary not in toolchain";
   if (r.status === "timeout") return "timed out";
   const lines = `${r.stderrTail}\n${r.stdoutTail}`
     .split(/\r?\n/)
@@ -102,15 +102,21 @@ function noteOf(r: CheckerResult): string {
 function printVerify(r: VerifyResult): void {
   console.log(`verify   ${r.decl}`);
   console.log(`module   ${r.module}`);
-  console.log(
-    `export   ${r.exportDecls ?? "?"} decls, ${formatBytes(r.exportBytes)}, sha256 ${r.exportHash.slice(0, 12)}, ${formatMs(r.exportDurationMs)}`,
-  );
+  if (r.exportDecls === null) {
+    // No leanexport run: the key is the module's .olean (or a synthetic hash when none was found).
+    const olean = r.exportBytes > 0 ? `.olean ${formatBytes(r.exportBytes)}, sha256 ${r.exportHash.slice(0, 12)}` : "no .olean found";
+    console.log(`export   none, module replay of ${r.module} (${olean})`);
+  } else {
+    console.log(
+      `export   ${r.exportDecls} decls, ${formatBytes(r.exportBytes)}, sha256 ${r.exportHash.slice(0, 12)}, ${formatMs(r.exportDurationMs)}`,
+    );
+  }
   console.log(`lean     ${r.leanVersion}`);
   console.log("");
   console.log(`${pad("checker", 22)}${pad("status", 13)}${pad("exit", 6)}${pad("time", 10)}note`);
   for (const c of r.checkers) {
     console.log(
-      `${pad(c.checker, 22)}${pad(c.status, 13)}${pad(c.exitCode === null ? "-" : String(c.exitCode), 6)}${pad(formatMs(c.durationMs), 10)}${noteOf(c)}`,
+      `${pad(c.checker, 22)}${pad(c.status, 13)}${pad(c.exitCode === null ? "-" : String(c.exitCode), 6)}${pad(formatMs(c.durationMs), 10)}${noteOf(c, r.exportDecls === null)}`,
     );
   }
   console.log("");
@@ -271,7 +277,7 @@ program
   .command("verify <decl>")
   .description("export a declaration's closure and replay it through the checkers (exit 0 accepted, 1 rejected, 2 otherwise)")
   .option("--project <dir>", "Lean project root", ".")
-  .option("--checkers <list>", "comma-separated checkers, or 'all' (L1 + every available L2), or 'L1'", "L1")
+  .option("--checkers <list>", "comma-separated checkers, 'all' (every available checker; leanchecker-module only without leanexport) or 'L1' (leanchecker, or leanchecker-module without leanexport)", "L1")
   .option("--force", "re-export and ignore cached results")
   .option("--json", "print the VerifyResult as JSON")
   .option("--verbose", "stream logs to stderr (also with --json)")
@@ -317,11 +323,11 @@ program
         console.log(JSON.stringify(infos, null, 2));
         return;
       }
-      console.log(`toolchain ${tc.leanVersion ?? "unknown"} at ${tc.prefix}`);
-      console.log(`${pad("checker", 22)}${pad("level", 7)}${pad("available", 11)}${pad("version", 22)}path`);
+      console.log(`toolchain ${tc.leanVersion ?? "unknown"}, binaries in ${tc.binDir}`);
+      console.log(`${pad("checker", 22)}${pad("level", 7)}${pad("available", 11)}${pad("version", 22)}note`);
       for (const i of infos) {
         console.log(
-          `${pad(i.checker, 22)}${pad(i.level, 7)}${pad(i.available ? "yes" : "no", 11)}${pad(i.version ?? "-", 22)}${i.path ?? "-"}`,
+          `${pad(i.checker, 22)}${pad(i.level, 7)}${pad(i.available ? "yes" : "no", 11)}${pad(i.version ?? "-", 22)}${i.note ?? ""}`,
         );
       }
     } catch (e) {

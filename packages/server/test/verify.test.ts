@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { VerifyResultSchema, type CheckerResult } from "@proofflow/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -6,12 +7,14 @@ import {
   cacheFileOf,
   mapLimit,
   mergeCheckerResults,
+  moduleCacheFileOf,
+  moduleFingerprint,
   parseCheckerList,
   readCachedResults,
   resolveCheckerSelection,
   verifyDecl,
 } from "../src/verify.js";
-import { FakeRunner, fakeProject, fakeToolchain, loadToyGraph, pipelineHandler, removeDir, tempDir } from "./helpers.js";
+import { FakeRunner, fakeOlean, fakeProject, fakeToolchain, loadToyGraph, pipelineHandler, removeDir, tempDir } from "./helpers.js";
 
 const graph = loadToyGraph();
 
@@ -34,6 +37,7 @@ describe("checker selection", () => {
       expect(resolveCheckerSelection(undefined, tc)).toEqual(["leanchecker"]);
       expect(resolveCheckerSelection("L1", tc)).toEqual(["leanchecker"]);
       expect(resolveCheckerSelection("all", tc)).toEqual(["leanchecker", "lean4lean", "con-ron"]);
+      expect(resolveCheckerSelection(["leanchecker-module"], tc)).toEqual(["leanchecker-module"]);
       expect(resolveCheckerSelection(["nanoda", "leanchecker"], tc)).toEqual(["leanchecker", "nanoda"]);
     } finally {
       removeDir(dir);
@@ -168,6 +172,93 @@ describe("verifyDecl", () => {
 
     const partial = await verifyDecl({ project, graph, decl: "Toy.double", toolchain, runner, checkers: ["leanchecker", "nanoda"] });
     expect(partial.verdict).toBe("partial");
+  });
+
+  it("without leanexport: defaults to module replay, never exports, keys the cache on the .olean", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir, ["leanchecker"], { leanexport: false });
+    const olean = fakeOlean(dir, "Toy.Basic", "binary olean bytes");
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    const logs: string[] = [];
+    expect(resolveCheckerSelection(undefined, toolchain)).toEqual(["leanchecker-module"]);
+    expect(resolveCheckerSelection("all", toolchain)).toEqual(["leanchecker-module"]);
+
+    const r = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner, log: (l) => logs.push(l) });
+    expect(r.checkers.map((c) => `${c.checker}:${c.status}`)).toEqual(["leanchecker-module:accepted"]);
+    expect(r.verdict).toBe("accepted");
+    expect(r.module).toBe("Toy.Basic");
+    expect(r.exportHash).toBe(createHash("sha256").update("binary olean bytes").digest("hex"));
+    expect(r.exportBytes).toBe(statSync(olean).size);
+    expect(r.exportDecls).toBeNull();
+    expect(r.exportDurationMs).toBe(0);
+    expect(runner.calls.some((c) => c.args.includes("leanexport"))).toBe(false);
+    expect(runner.calls.map((c) => c.args)).toEqual([["env", "leanchecker", "Toy.Basic"]]);
+    expect(logs.some((l) => l.startsWith("module replay of Toy.Basic"))).toBe(true);
+    expect(existsSync(cacheFileOf(project, "Toy.double_eq", r.exportHash))).toBe(true);
+    expect(existsSync(moduleCacheFileOf(project, "Toy.Basic", r.exportHash))).toBe(true);
+
+    // Another declaration of the same module reuses the module replay.
+    const again = await verifyDecl({ project, graph, decl: "Toy.clean_lemma", toolchain, runner, log: (l) => logs.push(l) });
+    expect(again.checkers[0]?.status).toBe("accepted");
+    expect(runner.calls).toHaveLength(1);
+    expect(logs).toContain("leanchecker-module: cached for module accepted");
+
+    // A rebuilt module (new .olean) is replayed again.
+    fakeOlean(dir, "Toy.Basic", "rebuilt olean");
+    const rebuilt = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner });
+    expect(rebuilt.exportHash).not.toBe(r.exportHash);
+    expect(runner.calls).toHaveLength(2);
+  });
+
+  it("without leanexport: export-based checkers in a mixed request are unavailable", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir, ["leanchecker", "nanoda"], { leanexport: false });
+    fakeOlean(dir, "Toy.Main");
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    const r = await verifyDecl({
+      project,
+      graph,
+      decl: "Toy.main",
+      toolchain,
+      runner,
+      checkers: ["leanchecker", "leanchecker-module", "nanoda"],
+    });
+    expect(r.checkers.map((c) => `${c.checker}:${c.status}`)).toEqual([
+      "leanchecker:unavailable",
+      "leanchecker-module:accepted",
+      "nanoda:unavailable",
+    ]);
+    expect(r.verdict).toBe("partial");
+    expect(r.exportDecls).toBeNull();
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("with leanexport: a mixed request exports for the export-based checkers and replays the module", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    fakeOlean(dir, "Toy.Basic");
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    const r = await verifyDecl({ project, graph, decl: "Toy.double", toolchain, runner, checkers: ["leanchecker", "leanchecker-module"] });
+    expect(r.checkers.map((c) => `${c.checker}:${c.status}`)).toEqual(["leanchecker:accepted", "leanchecker-module:accepted"]);
+    expect(r.exportDecls).toBe(2); // the export's hash is the cache key
+    expect(runner.calls.filter((c) => c.args[1] === "leanexport")).toHaveLength(1);
+    // Module-only requests on a 4.35 toolchain skip the export entirely.
+    const before = runner.calls.length;
+    const m = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner, checkers: ["leanchecker-module"] });
+    expect(m.exportDecls).toBeNull();
+    expect(runner.calls.length).toBe(before); // module replay cached from Toy.double's run
+  });
+
+  it("moduleFingerprint hashes the .olean, or falls back to module name and Lean version", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const missing = await moduleFingerprint(project, "Toy.Nowhere", toolchain);
+    expect(missing).toMatchObject({ file: null, bytes: 0, synthetic: true });
+    expect(missing.sha256).toBe(createHash("sha256").update("module:Toy.Nowhere\nlean:4.35.0-rc3").digest("hex"));
+    const file = fakeOlean(dir, "Toy.Nowhere", "x".repeat(70_000));
+    const found = await moduleFingerprint(project, "Toy.Nowhere", toolchain);
+    expect(found).toMatchObject({ file, bytes: 70_000, synthetic: false });
+    expect(found.sha256).toBe(createHash("sha256").update(readFileSync(file)).digest("hex"));
   });
 
   it("refuses unknown declarations", async () => {

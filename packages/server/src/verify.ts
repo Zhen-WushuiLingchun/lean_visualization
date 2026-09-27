@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   CheckerNameSchema,
-  L1_CHECKERS,
+  CheckerResultSchema,
   VerifyResultSchema,
   verdictOf,
   type CheckerName,
@@ -12,9 +12,19 @@ import {
   type GraphFile,
   type VerifyResult,
 } from "@proofflow/schema";
-import { ALL_CHECKERS, checkerBinaryPath, runChecker } from "./checkers.js";
-import { declSlug, exportDecl, exportPaths, findNode, formatMs } from "./export.js";
-import { resolveToolchain, type ProjectInfo, type Toolchain } from "./project.js";
+import { ALL_CHECKERS, checkerAvailability, hasLeanexport, isExportBased, runChecker } from "./checkers.js";
+import {
+  declSlug,
+  exportDecl,
+  exportModuleOf,
+  exportPaths,
+  findNode,
+  formatBytes,
+  formatMs,
+  sha256File,
+  type ExportInfo,
+} from "./export.js";
+import { locateOlean, resolveToolchain, type ProjectInfo, type Toolchain } from "./project.js";
 import { defaultRunner, type Runner } from "./runner.js";
 
 export class VerifyError extends Error {
@@ -28,17 +38,34 @@ export class VerifyError extends Error {
 }
 
 /**
- * `"all"` = every checker whose binary exists in the active toolchain (missing ones are omitted,
- * not reported as `unavailable`); `"L1"` = the default. Same meaning in the API and the CLI.
+ * `"all"` = see `allCheckers` (available checkers; module replay only without leanexport; missing ones
+ * are omitted, not reported as `unavailable`); `"L1"` = the default L1 checker. Same meaning in
+ * the API and the CLI.
  */
 export type CheckerSelection = readonly CheckerName[] | "all" | "L1";
 
-/** Checkers whose binary exists in the toolchain, in canonical order. */
+/** Checkers usable in the toolchain, in canonical order (see `checkerAvailability`). */
 export function availableCheckers(toolchain: Pick<Toolchain, "binDir">): CheckerName[] {
-  return ALL_CHECKERS.filter((c) => existsSync(checkerBinaryPath(toolchain.binDir, c)));
+  return ALL_CHECKERS.filter((c) => checkerAvailability(toolchain, c).available);
 }
 
-export const DEFAULT_CHECKERS: readonly CheckerName[] = L1_CHECKERS;
+/**
+ * What `"all"` means: every available checker, except that module replay is left out when
+ * `leanexport` exists (the export-based checkers cover the closure; module replay can still be
+ * requested explicitly). Without `leanexport` this is just `leanchecker-module`.
+ */
+export function allCheckers(toolchain: Pick<Toolchain, "binDir">): CheckerName[] {
+  const avail = availableCheckers(toolchain);
+  return hasLeanexport(toolchain) ? avail.filter(isExportBased) : avail;
+}
+
+/** L1 by default: `leanchecker` on the export when `leanexport` exists, else module replay. */
+export function defaultCheckers(toolchain: Pick<Toolchain, "binDir">): CheckerName[] {
+  return hasLeanexport(toolchain) ? ["leanchecker"] : ["leanchecker-module"];
+}
+
+/** Default on a toolchain with `leanexport` (Lean ≥ 4.35). Prefer `defaultCheckers(toolchain)`. */
+export const DEFAULT_CHECKERS: readonly CheckerName[] = ["leanchecker"];
 
 /** Checker results that are reused from the cache. Errors, timeouts and unavailability are retried. */
 export const REUSABLE_STATUSES: readonly CheckerStatus[] = ["accepted", "rejected", "declined"];
@@ -72,10 +99,53 @@ export function resolveCheckerSelection(
   selection: CheckerSelection | undefined,
   toolchain: Pick<Toolchain, "binDir">,
 ): CheckerName[] {
-  if (selection === undefined || selection === "L1") return [...DEFAULT_CHECKERS];
-  if (selection === "all") return availableCheckers(toolchain);
-  if (selection.length === 0) return [...DEFAULT_CHECKERS];
+  if (selection === undefined || selection === "L1") return defaultCheckers(toolchain);
+  if (selection === "all") return allCheckers(toolchain);
+  if (selection.length === 0) return defaultCheckers(toolchain);
   return sortCheckers(selection);
+}
+
+export interface ModuleFingerprint {
+  module: string;
+  /** The `.olean` that was hashed, or null when none was found. */
+  file: string | null;
+  sha256: string;
+  bytes: number;
+  /** True when no `.olean` was found and the hash is of `module + lean version` instead. */
+  synthetic: boolean;
+}
+
+/**
+ * Cache key for module replay: sha256 of the module's `.olean` (Lake layout, then dependencies,
+ * then the toolchain), or of `module + lean version` when the `.olean` cannot be found.
+ */
+export async function moduleFingerprint(
+  project: Pick<ProjectInfo, "dir">,
+  module: string,
+  toolchain: Pick<Toolchain, "prefix" | "leanVersion">,
+): Promise<ModuleFingerprint> {
+  const file = locateOlean(project.dir, module, toolchain.prefix);
+  if (file) {
+    const { sha256, bytes } = await sha256File(file);
+    return { module, file, sha256, bytes, synthetic: false };
+  }
+  const sha256 = createHash("sha256")
+    .update(`module:${module}\nlean:${toolchain.leanVersion ?? "unknown"}`, "utf8")
+    .digest("hex");
+  return { module, file: null, sha256, bytes: 0, synthetic: true };
+}
+
+export function moduleCacheFileOf(project: Pick<ProjectInfo, "stateDir">, module: string, oleanHash: string): string {
+  return path.join(project.stateDir, "cache", "_modules", declSlug(module), `${oleanHash}.json`);
+}
+
+async function readModuleCache(file: string): Promise<CheckerResult | null> {
+  try {
+    const parsed = CheckerResultSchema.safeParse(JSON.parse(await readFile(file, "utf8")));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Latest result per checker; `next` wins over `prev`. Canonical order. */
@@ -195,26 +265,54 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
   const toolchain = opts.toolchain ?? (await resolveToolchain(project, { runner }));
   const requested = resolveCheckerSelection(opts.checkers, toolchain);
 
+  const module = exportModuleOf(node, project);
+  const exportBased = requested.filter(isExportBased);
+  const wantsModule = requested.some((c) => !isExportBased(c));
+  const canExport = hasLeanexport(toolchain);
+
   return withDeclLock(`${project.stateDir}\u0000${decl}`, async () => {
-    const exp = await exportDecl({
-      project,
-      graph: opts.graph,
-      decl,
-      toolchain,
-      runner,
-      force: opts.force ?? false,
-      log,
-      ...(opts.exportTimeoutMs !== undefined ? { timeoutMs: opts.exportTimeoutMs } : {}),
-      ...(opts.graphMtimeMs !== undefined ? { graphMtimeMs: opts.graphMtimeMs } : {}),
-    });
-    const cacheFile = cacheFileOf(project, decl, exp.sha256);
+    // Export only when an export-based checker was asked for and the toolchain can export.
+    let exp: ExportInfo | null = null;
+    if (exportBased.length > 0 && canExport) {
+      exp = await exportDecl({
+        project,
+        graph: opts.graph,
+        decl,
+        toolchain,
+        runner,
+        force: opts.force ?? false,
+        log,
+        ...(opts.exportTimeoutMs !== undefined ? { timeoutMs: opts.exportTimeoutMs } : {}),
+        ...(opts.graphMtimeMs !== undefined ? { graphMtimeMs: opts.graphMtimeMs } : {}),
+      });
+    } else if (exportBased.length > 0) {
+      log(`no leanexport in this toolchain (bundled from Lean 4.35): ${exportBased.join(", ")} unavailable`);
+    }
+    const fp = wantsModule || !exp ? await moduleFingerprint(project, module, toolchain) : null;
+    if (!exp && fp) {
+      log(
+        fp.synthetic
+          ? `module replay of ${module}: no .olean found, cache key = hash of module name and Lean version`
+          : `module replay of ${module} (.olean ${formatBytes(fp.bytes)}, sha256 ${fp.sha256.slice(0, 12)})`,
+      );
+    }
+    const key = exp ? exp.sha256 : (fp as ModuleFingerprint).sha256;
+    const moduleCache = fp ? moduleCacheFileOf(project, module, fp.sha256) : null;
+
+    const cacheFile = cacheFileOf(project, decl, key);
     const cached = await readCacheFile(cacheFile, decl);
     const reused: CheckerResult[] = [];
     const toRun: CheckerName[] = [];
     for (const c of requested) {
-      const hit = opts.force ? undefined : cached?.checkers.find((r) => r.checker === c);
-      if (hit && REUSABLE_STATUSES.includes(hit.status)) {
-        log(`${c}: cached ${hit.status}`);
+      let hit = opts.force ? undefined : cached?.checkers.find((r) => r.checker === c);
+      let from = "cached";
+      if (!hit && !opts.force && !isExportBased(c) && moduleCache) {
+        // Module replay checks every declaration of the module: share it across declarations.
+        hit = (await readModuleCache(moduleCache)) ?? undefined;
+        from = "cached for module";
+      }
+      if (hit && hit.checker === c && REUSABLE_STATUSES.includes(hit.status)) {
+        log(`${c}: ${from} ${hit.status}`);
         reused.push(hit);
       } else toRun.push(c);
     }
@@ -222,26 +320,30 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
     const ran = await mapLimit(toRun, opts.concurrency ?? 2, (c) =>
       runChecker(c, {
         toolchain,
-        exportFile: exp.file,
+        exportFile: exp?.file ?? null,
+        module,
+        projectDir: project.dir,
         axioms: node.axioms,
         nanodaConfigFile: exportPaths(project, decl).nanodaConfig,
-        cwd: path.dirname(exp.file),
+        ...(exp && isExportBased(c) ? { cwd: path.dirname(exp.file) } : {}),
         runner,
         log,
         ...(opts.checkerTimeoutMs !== undefined ? { timeoutMs: opts.checkerTimeoutMs } : {}),
       }),
     );
+    const moduleRun = ran.find((r) => !isExportBased(r.checker));
+    if (moduleRun && moduleCache) await writeJsonAtomic(moduleCache, CheckerResultSchema.parse(moduleRun));
 
     const verifiedAt = ran.length === 0 && cached ? cached.verifiedAt : new Date().toISOString();
-    const leanVersion = exp.leanVersion ?? toolchain.leanVersion ?? "unknown";
+    const leanVersion = exp?.leanVersion ?? toolchain.leanVersion ?? "unknown";
     const current = mergeCheckerResults(reused, ran);
     const base = {
       decl,
-      module: exp.module,
-      exportHash: exp.sha256,
-      exportBytes: exp.bytes,
-      exportDecls: exp.decls,
-      exportDurationMs: exp.durationMs,
+      module,
+      exportHash: key,
+      exportBytes: exp ? exp.bytes : (fp?.bytes ?? 0),
+      exportDecls: exp ? exp.decls : null,
+      exportDurationMs: exp ? exp.durationMs : 0,
       verifiedAt,
       leanVersion,
     };
@@ -251,7 +353,8 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
       await writeJsonAtomic(cacheFile, VerifyResultSchema.parse(stored));
     }
     const result: VerifyResult = { ...base, checkers: current, verdict: verdictOf(current) };
-    log(`verdict: ${result.verdict} (${current.length} checker${current.length === 1 ? "" : "s"}, export ${formatMs(exp.durationMs)})`);
+    const how = exp ? `export ${formatMs(exp.durationMs)}` : "module replay, no export";
+    log(`verdict: ${result.verdict} (${current.length} checker${current.length === 1 ? "" : "s"}, ${how})`);
     return VerifyResultSchema.parse(result);
   });
 }

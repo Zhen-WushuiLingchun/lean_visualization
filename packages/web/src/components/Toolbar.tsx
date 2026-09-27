@@ -2,6 +2,7 @@ import { useDeferredValue, useId, useMemo, useState, type KeyboardEvent, type Re
 import { TAINT_SEVERITY, type Taint } from "@proofflow/schema";
 import { KIND_PALETTE, kindColorKey, type KindColorKey } from "../graph/colors";
 import type { ExternalMode, SiteFilter } from "../graph/cone";
+import { ELK_AUTO_LIMIT, engineLabel, type LayoutChoice, type LayoutEngine } from "../graph/layout";
 import { fuzzySearch } from "../graph/search";
 import { TAINT_INFO } from "../graph/trust";
 import { useApp } from "../state/appState";
@@ -103,9 +104,9 @@ function Targets() {
   const isDefault = state.targets.length === state.defaultTargets.length && state.targets.every((t) => state.defaultTargets.includes(t));
   return (
     <div className="pf-target-chips" aria-label="Targets">
-      {state.targets.length > 6 && isDefault ? (
+      {state.targets.length > 6 ? (
         <span className="pf-chip" title={state.targets.join("\n")}>
-          {state.targets.length} final theorems
+          {state.targets.length} {isDefault ? "final theorems" : "targets"}
         </span>
       ) : (
         state.targets.map((t) => {
@@ -178,7 +179,8 @@ function FilterPopover() {
 export interface LayoutStatus {
   phase: "idle" | "running" | "done" | "error" | "guard" | "empty";
   nodes: number;
-  engine?: string;
+  /** Engine that ran (done) or will run (running: "elk" or "fast"). */
+  engine?: LayoutEngine | "elk";
   ms?: number;
   error?: string;
 }
@@ -205,9 +207,9 @@ export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSv
   }
   const status =
     layout.phase === "running"
-      ? `Layouting ${layout.nodes} nodes...`
+      ? `Layouting ${layout.nodes} nodes (${layout.engine === "fast" ? "fast layout" : "ELK"})...`
       : layout.phase === "done"
-        ? `${layout.nodes} nodes, ${layout.engine === "worker" ? "worker" : "main thread"} layout ${((layout.ms ?? 0) / 1000).toFixed(2)} s`
+        ? `${layout.nodes} nodes, ${layout.engine && layout.engine !== "elk" ? engineLabel(layout.engine) : "layout"} ${((layout.ms ?? 0) / 1000).toFixed(2)} s`
         : layout.phase === "guard"
           ? `${layout.nodes} nodes: too many to lay out`
           : layout.phase === "error"
@@ -268,6 +270,14 @@ export function Toolbar({ searchRef, layout, canExport, onExportJson, onExportSv
             <option value="all">All</option>
             <option value="stmt">Statement</option>
             <option value="proof">Proof</option>
+          </select>
+        </label>
+        <label title={`auto: ELK up to ${ELK_AUTO_LIMIT} nodes, the fast layered layout above. ELK is slow on big cones.`}>
+          Layout
+          <select value={o.layoutChoice} onChange={(e) => set({ layoutChoice: e.target.value as LayoutChoice })}>
+            <option value="auto">auto</option>
+            <option value="elk">elk</option>
+            <option value="fast">fast</option>
           </select>
         </label>
         <FilterPopover />

@@ -5,7 +5,18 @@ import { fileURLToPath } from "node:url";
 import { GraphFileSchema, type GraphFile } from "@proofflow/schema";
 import type { ZodError } from "zod";
 import { formatMs, lastLines } from "./export.js";
-import { baseEnv, resolveLake, type ProjectInfo } from "./project.js";
+import {
+  baseEnv,
+  defaultLocalPrefixesOf,
+  isModulePrefix,
+  locateOlean,
+  moduleComponents,
+  resolveLake,
+  type ProjectInfo,
+} from "./project.js";
+
+/** Modules shipped with the toolchain; their .olean is not under the project. */
+const CORE_PREFIXES = ["Init", "Std", "Lean", "Lake"];
 import { defaultRunner, describeFailure, type Runner } from "./runner.js";
 
 export const DEFAULT_EXTRACT_TIMEOUT_MS = 30 * 60_000;
@@ -172,6 +183,18 @@ export async function extractProject(opts: ExtractOptions): Promise<ExtractResul
     log(`lake build ok (${formatMs(b.durationMs)})`);
   }
 
+  const missing = roots.filter((r) => !CORE_PREFIXES.some((p) => isModulePrefix(p, r)) && !locateOlean(project.dir, r));
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 5).join(", ") + (missing.length > 5 ? `, and ${missing.length - 5} more` : "");
+    const first = missing[0] ?? "";
+    throw new ExtractError(
+      `No .olean for root module ${shown} (looked for .lake/build/lib/lean/${moduleComponents(first).join("/")}.olean). ` +
+        "Build the project, or pass --root <Module> for modules that exist.",
+    );
+  }
+  const localPrefixes =
+    opts.localPrefixes && opts.localPrefixes.length > 0 ? [...opts.localPrefixes] : defaultLocalPrefixesOf(project.libs, roots);
+
   const template = opts.scriptPath ? path.resolve(opts.scriptPath) : locateExtractScript(opts.env ?? process.env);
   const script = await materialiseScript(template, roots, project.stateDir);
   const outPath = path.resolve(opts.outPath ?? path.join(project.stateDir, "graph.json"));
@@ -189,13 +212,17 @@ export async function extractProject(opts: ExtractOptions): Promise<ExtractResul
       projectDir: project.dirPosix,
       projectName: project.name,
       roots,
-      ...(opts.localPrefixes ? { localPrefixes: opts.localPrefixes } : {}),
+      localPrefixes,
       expandExternal: opts.expandExternal ?? false,
       statements: opts.statements ?? true,
       statementMaxChars: opts.statementMaxChars ?? DEFAULT_STATEMENT_MAX_CHARS,
     }),
   ];
-  log(`extract ${roots.join(", ")}`);
+  log(
+    roots.length <= 4
+      ? `extract ${roots.join(", ")}`
+      : `extract ${roots.length} root modules (${roots.slice(0, 3).join(", ")}, ...), local prefixes ${localPrefixes.join(", ")}`,
+  );
   const r = await runner.run(lake, args, {
     cwd: project.dir,
     env,

@@ -8,6 +8,7 @@ import {
   ReactFlow,
   getBezierPath,
   useReactFlow,
+  useStore,
   type Edge,
   type EdgeProps,
   type Node as FlowNode,
@@ -18,7 +19,7 @@ import { borderKey, edgeColorVar, kindVar, type KindColorKey } from "../graph/co
 import { relatedInView, type Cone, type ViewNode } from "../graph/cone";
 import { viewColorKey } from "../graph/exportView";
 import type { ViewSite } from "../graph/graphIndex";
-import type { LayoutResult } from "../graph/layout";
+import { fitViewportFor, layoutBounds, MIN_ZOOM, type LayoutResult } from "../graph/layout";
 import { headerText, type Size } from "../graph/measure";
 import { useApp, useServices } from "../state/appState";
 import { useEdgeHighlight, useNodeHighlight } from "../state/highlight";
@@ -102,7 +103,6 @@ const SiteEdge = memo(function SiteEdge(props: EdgeProps<PFEdge>) {
 });
 
 const nodeTypes = { pf: ProofNode };
-const FIT_OPTIONS = { padding: 0.08, maxZoom: 1.2 };
 const edgeTypes = { site: SiteEdge };
 
 export interface GraphCanvasProps {
@@ -158,14 +158,20 @@ export function GraphCanvas({ cone, layout, sizes, matches }: GraphCanvasProps) 
     [cone],
   );
 
-  // Fit once per new layout, never on selection.
+  // Fit once per new layout, never on selection. The viewport is computed from the known layout
+  // bounds and applied with setViewport as soon as React Flow has a pan-zoom instance and a pane
+  // size. (xyflow's own fitView is queued behind node measurement and silently dropped when it
+  // fires before the pan-zoom exists; with 1000+ nodes that left the canvas unfitted and empty.)
+  const paneW = useStore((s) => s.width);
+  const paneH = useStore((s) => s.height);
+  const zoomReady = useStore((s) => s.panZoom !== null);
+  const bounds = useMemo(() => layoutBounds(layout.positions, sizes), [layout, sizes]);
   const fitted = useRef<LayoutResult | null>(null);
   useEffect(() => {
-    if (fitted.current === layout) return;
+    if (!zoomReady || paneW <= 0 || paneH <= 0 || fitted.current === layout) return;
     fitted.current = layout;
-    const t = setTimeout(() => void rf.fitView(FIT_OPTIONS), 0);
-    return () => clearTimeout(t);
-  }, [layout, rf]);
+    void rf.setViewport(fitViewportFor(bounds, paneW, paneH), { duration: 0 });
+  }, [layout, bounds, zoomReady, paneW, paneH, rf]);
 
   // Keep the selected node on screen when the panel opens and narrows the canvas (pan only, same zoom).
   const selected = state.selected;
@@ -227,9 +233,7 @@ export function GraphCanvas({ cone, layout, sizes, matches }: GraphCanvasProps) 
       elementsSelectable={false}
       zoomOnDoubleClick={false}
       onlyRenderVisibleElements
-      fitView
-      fitViewOptions={FIT_OPTIONS}
-      minZoom={0.03}
+      minZoom={MIN_ZOOM}
       maxZoom={2.5}
       colorMode="system"
     >

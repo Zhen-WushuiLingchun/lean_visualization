@@ -13,7 +13,7 @@ import { JobManager } from "./jobs.js";
 import { ToolchainCache, type ProjectInfo, type Toolchain } from "./project.js";
 import { defaultRunner, type Runner } from "./runner.js";
 import { GraphStore } from "./store.js";
-import { DEFAULT_CHECKERS, readCachedResults, sortCheckers, verifyDecl, type CheckerSelection } from "./verify.js";
+import { readCachedResults, sortCheckers, verifyDecl, type CheckerSelection } from "./verify.js";
 
 export const DEFAULT_PORT = 4870;
 export const DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
@@ -192,10 +192,11 @@ export function createApp(opts: CreateAppOptions): Hono {
     const { decl, force } = parsed.data;
     if (!loaded.byId.has(decl)) return c.json({ error: `Unknown declaration: ${decl}` }, 404);
     const requested = parsed.data.checkers;
-    // "all" is resolved against the toolchain when the job runs (same rule as the CLI).
+    // "all" and the default ("L1": leanchecker, or module replay without leanexport) are resolved
+    // against the toolchain when the job runs, with the same rule as the CLI.
     const selection: CheckerSelection =
-      requested === "all" ? "all" : requested && requested.length > 0 ? sortCheckers(requested) : [...DEFAULT_CHECKERS];
-    const key = `verify\u0000${decl}\u0000${selection === "all" ? "all" : selection.join(",")}\u0000${force ? 1 : 0}`;
+      requested === "all" ? "all" : requested && requested.length > 0 ? sortCheckers(requested) : "L1";
+    const key = `verify\u0000${decl}\u0000${typeof selection === "string" ? selection : selection.join(",")}\u0000${force ? 1 : 0}`;
     const job = jobs.submitVerify(
       decl,
       async (ctx) => {

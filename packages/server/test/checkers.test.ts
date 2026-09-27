@@ -2,7 +2,18 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { CheckerName, CheckerStatus } from "@proofflow/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ALL_CHECKERS, checkerEnvFor, listCheckers, nanodaConfig, parseRejectedDecl, runChecker, runNanoda } from "../src/checkers.js";
+import {
+  ALL_CHECKERS,
+  LEANEXPORT_NOTE,
+  MODULE_REPLAY_NOTE,
+  checkerAvailability,
+  checkerEnvFor,
+  listCheckers,
+  nanodaConfig,
+  parseRejectedDecl,
+  runChecker,
+  runNanoda,
+} from "../src/checkers.js";
 import { FakeRunner, fakeToolchain, removeDir, tempDir, type FakeReply } from "./helpers.js";
 
 let dir = "";
@@ -17,7 +28,15 @@ afterAll(() => removeDir(dir));
 async function statusOf(checker: CheckerName, reply: FakeReply, axioms: string[] = []) {
   const toolchain = fakeToolchain(dir);
   const runner = new FakeRunner(() => reply);
-  const r = await runChecker(checker, { toolchain, exportFile, axioms, runner, timeoutMs: 1000 });
+  const r = await runChecker(checker, {
+    toolchain,
+    exportFile,
+    axioms,
+    runner,
+    timeoutMs: 1000,
+    module: "Toy.Basic",
+    projectDir: dir,
+  });
   return { r, runner };
 }
 
@@ -41,6 +60,22 @@ const cases: Case[] = [
   { checker: "leanchecker", reply: { exitCode: 1, stdout: T4_LEANCHECKER }, status: "rejected", rejectedDecl: "t4" },
   { checker: "leanchecker", reply: { exitCode: 2 }, status: "error" },
   { checker: "leanchecker", reply: { exitCode: 134, stderr: "Aborted" }, status: "error" },
+  // leanchecker-module (`lake env leanchecker <Module>`, silent on success; verified outputs)
+  { checker: "leanchecker-module", reply: { exitCode: 0 }, status: "accepted" },
+  {
+    checker: "leanchecker-module",
+    reply: {
+      exitCode: 1,
+      stderr:
+        "leanchecker found a problem in Smoke.Hack\nuncaught exception: while replaying declaration 'Smoke.bogus':\n(kernel) declaration type mismatch, 'Smoke.bogus' has type\n  True\nbut it is expected to have type\n  False\n",
+    },
+    status: "rejected",
+    rejectedDecl: "Smoke.bogus",
+  },
+  { checker: "leanchecker-module", reply: { exitCode: 1, stderr: "some kernel complaint" }, status: "rejected", rejectedDecl: null },
+  { checker: "leanchecker-module", reply: { exitCode: 1, stderr: "uncaught exception: Could not find any oleans for: Toy.Basic" }, status: "error" },
+  { checker: "leanchecker-module", reply: { exitCode: 2 }, status: "error" },
+  { checker: "leanchecker-module", reply: { exitCode: 0, stderr: "PANIC at Lean.Environment" }, status: "error" },
   // leanchecker-paranoid
   { checker: "leanchecker-paranoid", reply: { exitCode: 0, stdout: "Lean default kernel accepts the solution\n" }, status: "accepted" },
   { checker: "leanchecker-paranoid", reply: { exitCode: 1, stderr: "(kernel) declaration type mismatch, 'Foo.bar' has type" }, status: "rejected", rejectedDecl: "Foo.bar" },
@@ -160,6 +195,55 @@ describe("argv, environment and stdin", () => {
   it("nanodaConfig always includes the standard three, deduplicated", () => {
     const c = nanodaConfig("x.ndjson", ["propext", "propext"]);
     expect(c["permitted_axioms"]).toEqual(["Classical.choice", "Quot.sound", "propext"]);
+  });
+});
+
+describe("leanchecker-module", () => {
+  it("runs `lake env leanchecker <module>` in the project dir, stdin closed, aborting on panic", async () => {
+    const { r, runner } = await statusOf("leanchecker-module", { exitCode: 0 });
+    const toolchain = fakeToolchain(dir);
+    const call = runner.calls[0];
+    expect(call?.cmd).toBe(toolchain.lake);
+    expect(call?.args).toEqual(["env", "leanchecker", "Toy.Basic"]);
+    expect(call?.opts.cwd).toBe(dir);
+    expect(call?.opts.stdin).toBe("ignore");
+    expect(call?.opts.env?.["LEAN_ABORT_ON_PANIC"]).toBe("1");
+    expect(r.command).toEqual([toolchain.lake, "env", "leanchecker", "Toy.Basic"]);
+    expect(runner.calls.some((c) => c.args.includes("leanexport"))).toBe(false);
+  });
+
+  it("is available without leanexport; export-based checkers are not", async () => {
+    const sub = tempDir();
+    try {
+      const toolchain = fakeToolchain(sub, ["leanchecker"], { leanexport: false });
+      const infos = listCheckers(toolchain);
+      const byName = new Map(infos.map((i) => [i.checker, i]));
+      expect(byName.get("leanchecker-module")).toMatchObject({ available: true, level: "L1", note: MODULE_REPLAY_NOTE });
+      expect(byName.get("leanchecker")).toMatchObject({ available: false, path: null, note: LEANEXPORT_NOTE });
+      for (const c of ["leanchecker-paranoid", "lean4lean", "nanoda", "con-leche", "con-ron"] as const) {
+        expect(byName.get(c)).toMatchObject({ available: false, note: LEANEXPORT_NOTE });
+      }
+      expect(checkerAvailability(toolchain, "leanchecker").available).toBe(false);
+      // Running an export-based checker without leanexport spawns nothing.
+      const runner = new FakeRunner(() => ({ exitCode: 0 }));
+      const r = await runChecker("leanchecker", { toolchain, exportFile: null, runner });
+      expect(r.status).toBe("unavailable");
+      expect(runner.calls).toHaveLength(0);
+    } finally {
+      removeDir(sub);
+    }
+  });
+
+  it("notes a missing binary when leanexport exists, and has no note when available", () => {
+    const sub = tempDir();
+    try {
+      const infos = listCheckers(fakeToolchain(sub, ["leanchecker"]));
+      expect(infos.find((i) => i.checker === "leanchecker")?.note).toBeNull();
+      expect(infos.find((i) => i.checker === "lean4lean")?.note).toMatch(/not in this toolchain/);
+      expect(listCheckers(null).every((i) => !i.available && i.note !== null)).toBe(true);
+    } finally {
+      removeDir(sub);
+    }
   });
 });
 

@@ -2,7 +2,8 @@ import { z } from "zod";
 
 /** Checkers that ship inside a Lean toolchain (v4.35+). Names are stable identifiers, not binaries. */
 export const CheckerNameSchema = z.enum([
-  "leanchecker", // official kernel, fresh replay of the export (L1)
+  "leanchecker", // official kernel, fresh replay of the export (L1); needs leanexport (Lean ≥ 4.35)
+  "leanchecker-module", // official kernel replaying the node's whole module from .olean on top of its imports (L1 fallback, Lean ≥ 4.28)
   "leanchecker-paranoid", // official kernel with extra checks (L2)
   "lean4lean", // typechecker written in Lean (L2)
   "nanoda", // Rust typechecker, binary `nanoda_bin` (L2)
@@ -11,7 +12,12 @@ export const CheckerNameSchema = z.enum([
 ]);
 export type CheckerName = z.infer<typeof CheckerNameSchema>;
 
-export const L1_CHECKERS: readonly CheckerName[] = ["leanchecker"];
+/**
+ * Kernel-replay checkers. `leanchecker` replays the declaration's exact closure from a leanexport
+ * file; `leanchecker-module` replays the declaration's whole module from its `.olean` with the
+ * imported environment trusted, and is the fallback on toolchains without `leanexport`.
+ */
+export const L1_CHECKERS: readonly CheckerName[] = ["leanchecker", "leanchecker-module"];
 export const L2_CHECKERS: readonly CheckerName[] = [
   "leanchecker-paranoid",
   "lean4lean",
@@ -56,12 +62,15 @@ export type Verdict = z.infer<typeof VerdictSchema>;
 
 export const VerifyResultSchema = z.object({
   decl: z.string(),
-  /** Module passed to `leanexport`. */
+  /** Module passed to `leanexport` (or replayed by `leanchecker-module`). */
   module: z.string(),
-  /** sha256 hex of the NDJSON export. Cache key together with `decl`. */
+  /**
+   * sha256 hex of the NDJSON export; for module replay without an export, sha256 of the module's
+   * `.olean`. Cache key together with `decl`.
+   */
   exportHash: z.string(),
   exportBytes: z.number().int().nonnegative(),
-  /** Number of declaration records in the export, or null if not counted. */
+  /** Number of declaration records in the export, or null if not counted / no export. */
   exportDecls: z.number().int().nonnegative().nullable(),
   exportDurationMs: z.number().nonnegative(),
   /** ISO-8601. */
@@ -89,6 +98,8 @@ export const CheckerInfoSchema = z.object({
   path: z.string().nullable(),
   version: z.string().nullable(),
   level: z.enum(["L1", "L2"]),
+  /** Why the checker is unavailable, or what it checks instead (e.g. module replay). */
+  note: z.string().nullable(),
 });
 export type CheckerInfo = z.infer<typeof CheckerInfoSchema>;
 

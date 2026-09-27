@@ -54,18 +54,28 @@ export const AXIOM_CLASS_INFO: Record<AxiomClass, { label: string; explain: stri
   custom: { label: "Custom", explain: "Declared by the project. Its consistency is not checked." },
 };
 
-export const CHECKER_INFO: Record<CheckerName, { level: "L1" | "L2"; explain: string }> = {
-  leanchecker: { level: "L1", explain: "Lean's own kernel replays the exported closure in a fresh environment." },
-  "leanchecker-paranoid": { level: "L2", explain: "Lean's kernel with extra checks." },
-  lean4lean: { level: "L2", explain: "Typechecker written in Lean." },
-  nanoda: { level: "L2", explain: "Independent typechecker written in Rust." },
-  "con-leche": { level: "L2", explain: "Independent checker. Declines on non-standard axioms." },
-  "con-ron": { level: "L2", explain: "Port of con-leche. Declines on non-standard axioms." },
+export const CHECKER_INFO: Record<CheckerName, { level: "L1" | "L2"; label: string | null; explain: string }> = {
+  leanchecker: {
+    level: "L1",
+    label: "kernel, export replay",
+    explain: "Lean's own kernel replays the exported closure of this declaration in a fresh environment.",
+  },
+  "leanchecker-module": {
+    level: "L1",
+    label: "kernel, module replay",
+    explain:
+      "Lean's kernel replays the declaration's whole module from its .olean on top of its imports, which are trusted. Fallback on toolchains without leanexport (before Lean 4.35).",
+  },
+  "leanchecker-paranoid": { level: "L2", label: null, explain: "Lean's kernel with extra checks." },
+  lean4lean: { level: "L2", label: null, explain: "Typechecker written in Lean." },
+  nanoda: { level: "L2", label: null, explain: "Independent typechecker written in Rust." },
+  "con-leche": { level: "L2", label: null, explain: "Independent checker. Declines on non-standard axioms." },
+  "con-ron": { level: "L2", label: null, explain: "Port of con-leche. Declines on non-standard axioms." },
 };
 
 export const LEVEL_INFO = {
   L0: "Trust profile from graph.json: which axioms, sorry, native_decide and unsafe code this rests on. Always shown.",
-  L1: "Kernel replay: the node and its whole closure re-typecheck from scratch with Lean's kernel. Catches environment tampering. Shares the kernel with Lean.",
+  L1: "Kernel replay: the node and its whole closure re-typecheck from scratch with Lean's kernel. Catches environment tampering. Shares the kernel with Lean. On toolchains without leanexport (before Lean 4.35) the fallback replays the node's whole module from its .olean and trusts its imports, which is weaker.",
   L2: "Independent kernels check the same export. Agreement is strong evidence. Disagreement is a finding.",
   none: "No level proves that the statement means what you intend, that a custom axiom is consistent, or anything about unsafe, partial, extern or implemented_by bodies.",
 } as const;

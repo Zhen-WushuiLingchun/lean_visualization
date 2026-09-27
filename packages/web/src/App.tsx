@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { ReactFlowProvider, useReactFlow } from "@xyflow/react";
+import { ReactFlowProvider, useReactFlow, useStoreApi } from "@xyflow/react";
 import type { CheckerInfo, GraphFile } from "@proofflow/schema";
 import { fetchCheckers, fetchGraph } from "./api/client";
-import { Breadcrumb } from "./components/Breadcrumb";
+import { Breadcrumb, NarrowNotice } from "./components/Breadcrumb";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { Landing, loadSampleGraph } from "./components/Landing";
 import { NodePanel } from "./components/NodePanel";
@@ -12,12 +12,13 @@ import { Toolbar, type LayoutStatus } from "./components/Toolbar";
 import { currentTheme } from "./graph/colors";
 import { buildCone, SCALE_LIMIT, type Cone, type ViewNode } from "./graph/cone";
 import { coneToGraphFile, coneToSvg, downloadText, viewColorKey } from "./graph/exportView";
-import { buildIndex, localSinksOf } from "./graph/graphIndex";
+import { buildIndex } from "./graph/graphIndex";
 import { assignLayers } from "./graph/layers";
-import { LayoutCancelled, runLayout, type LayoutResult } from "./graph/layout";
+import { chooseEngine, fitViewportFor, layoutBounds, LayoutCancelled, runLayout, type LayoutResult } from "./graph/layout";
 import { measureAll, type Size } from "./graph/measure";
 import { AppContext, initialState, reducer, ServicesContext, useApp, type AppContextValue, type GraphSource, type Services } from "./state/appState";
 import { HighlightStore } from "./state/highlight";
+import { initialView } from "./state/initialView";
 import { VerifyStore } from "./state/verifyStore";
 
 const ALWAYS = (): boolean => true;
@@ -37,6 +38,7 @@ function isTyping(el: EventTarget | null): boolean {
 function Workspace() {
   const { state, dispatch, index, highlight } = useApp();
   const rf = useReactFlow();
+  const store = useStoreApi();
   const searchRef = useRef<HTMLInputElement>(null);
   const o = state.options;
 
@@ -77,7 +79,7 @@ function Workspace() {
     }
     if (!layering || !sizes) return;
     const ctrl = new AbortController();
-    setStatus({ phase: "running", nodes: cone.nodes.length });
+    setStatus({ phase: "running", nodes: cone.nodes.length, engine: chooseEngine(o.layoutChoice, cone.nodes.length) });
     const input = {
       nodes: cone.nodes.map((n) => {
         const s = sizes.get(n.id) ?? { width: 160, height: 74 };
@@ -85,7 +87,7 @@ function Workspace() {
       }),
       edges: cone.edges.filter((_e, k) => !layering.feedback.has(k)),
     };
-    runLayout(input, { signal: ctrl.signal })
+    runLayout(input, { signal: ctrl.signal, choice: o.layoutChoice })
       .then((result) => {
         if (ctrl.signal.aborted) return;
         setShown({ cone, result, sizes });
@@ -96,7 +98,7 @@ function Workspace() {
         setStatus({ phase: "error", nodes: cone.nodes.length, error: e instanceof Error ? e.message : String(e) });
       });
     return () => ctrl.abort();
-  }, [cone, tooBig, layering, sizes]);
+  }, [cone, tooBig, layering, sizes, o.layoutChoice]);
 
   const matches = useMemo(() => {
     const tf = o.taintFilter;
@@ -107,7 +109,12 @@ function Workspace() {
 
   useEffect(() => highlight.setSelected(state.selected), [highlight, state.selected]);
 
-  const fit = useCallback(() => void rf.fitView({ padding: 0.08, maxZoom: 1.2, duration: 200 }), [rf]);
+  // Deterministic fit from the known layout bounds (same function as the automatic fit in GraphCanvas).
+  const fit = useCallback(() => {
+    if (!shown) return;
+    const { width, height } = store.getState();
+    void rf.setViewport(fitViewportFor(layoutBounds(shown.result.positions, shown.sizes), width, height), { duration: 200 });
+  }, [rf, store, shown]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
@@ -142,6 +149,7 @@ function Workspace() {
     <div className="pf-app">
       <Toolbar searchRef={searchRef} layout={status} canExport={shown !== null && !tooBig} onExportJson={exportJson} onExportSvg={exportSvg} onFit={fit} />
       <Breadcrumb cone={cone} />
+      <NarrowNotice />
       <div className="pf-main">
         <Stats />
         <section className="pf-center" aria-label="Dependency graph">
@@ -149,7 +157,9 @@ function Workspace() {
           {tooBig && cone && <ScaleGuard cone={cone} />}
           {status.phase === "running" && !shown && (
             <div className="pf-overlay">
-              <div className="pf-card pf-status is-busy">Layouting {status.nodes} nodes...</div>
+              <div className="pf-card pf-status is-busy">
+                Layouting {status.nodes} nodes ({status.engine === "fast" ? "fast layout" : "ELK"})...
+              </div>
             </div>
           )}
           {status.phase === "empty" && (
@@ -180,13 +190,15 @@ export function App() {
   const verify = useMemo(() => new VerifyStore(), []);
   const highlight = useMemo(() => new HighlightStore(), []);
   const [checkers, setCheckers] = useState<CheckerInfo[] | null>(null);
-  const index = useMemo(() => (state.graph ? buildIndex(state.graph) : null), [state.graph]);
+  const index = state.index;
 
   const onGraph = useCallback(
     (graph: GraphFile, source: GraphSource, label: string) => {
       verify.reset();
       verify.enabled = source === "server";
-      dispatch({ type: "loaded", graph, source, label, defaultTargets: localSinksOf(graph) });
+      const idx = buildIndex(graph);
+      const { initialTargets, narrowed } = initialView(idx);
+      dispatch({ type: "loaded", graph, index: idx, source, label, defaultTargets: idx.localSinks, initialTargets, narrowed });
     },
     [verify],
   );
@@ -231,15 +243,15 @@ export function App() {
 
   return (
     <ServicesContext.Provider value={services}>
-    <AppContext.Provider value={ctx}>
-      {state.phase === "loading" && <div className="pf-loading">Loading graph...</div>}
-      {state.phase === "landing" && <Landing serverError={state.loadError} onGraph={onGraph} />}
-      {state.phase === "ready" && index && (
-        <ReactFlowProvider>
-          <Workspace />
-        </ReactFlowProvider>
-      )}
-    </AppContext.Provider>
+      <AppContext.Provider value={ctx}>
+        {state.phase === "loading" && <div className="pf-loading">Loading graph...</div>}
+        {state.phase === "landing" && <Landing serverError={state.loadError} onGraph={onGraph} />}
+        {state.phase === "ready" && index && (
+          <ReactFlowProvider>
+            <Workspace />
+          </ReactFlowProvider>
+        )}
+      </AppContext.Provider>
     </ServicesContext.Provider>
   );
 }

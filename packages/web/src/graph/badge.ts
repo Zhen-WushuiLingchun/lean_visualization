@@ -2,7 +2,8 @@ import { L1_CHECKERS, type CheckerResult, type VerifyResult } from "@proofflow/s
 
 /**
  * Verification badge, exactly as AGENTS.md section 5 and docs/VERIFICATION.md:
- * green only when L1 (leanchecker) accepted and every other requested checker accepted;
+ * green only when at least one L1 kernel replay (`leanchecker` or its module-replay fallback
+ * `leanchecker-module`) accepted and every other requested checker accepted;
  * any rejection is red; error or timeout is amber; declined or unavailable is a grey dash with the
  * reason. The server's `verdict` is shown in the panel but never used to paint the badge green.
  */
@@ -52,15 +53,20 @@ export function badgeOf(result: VerifyResult | null | undefined): Badge {
   }
   const l1 = considered.filter((c) => (L1_CHECKERS as readonly string[]).includes(c.checker));
   const notAccepted = considered.filter((c) => c.status !== "accepted");
-  if (l1.length === 0 || l1.some((c) => c.status !== "accepted")) {
-    const reason = l1.length === 0 ? "Kernel replay (leanchecker) was not run." : l1.map(describe).join("; ");
+  if (!l1.some((c) => c.status === "accepted")) {
+    const reason = l1.length === 0 ? "No kernel replay (leanchecker or leanchecker-module) was run." : l1.map(describe).join("; ");
     return { kind: "dash", label: "Incomplete", reason };
   }
   if (notAccepted.length > 0) {
     const label = notAccepted.every((c) => c.status === "declined") ? "Declined" : "Incomplete";
     return { kind: "dash", label, reason: notAccepted.map(describe).join("; ") };
   }
-  return { kind: "ok", label: "Accepted", reason: `Accepted by ${considered.map((c) => c.checker).join(", ")}.` };
+  const moduleOnly = !considered.some((c) => c.checker === "leanchecker");
+  return {
+    kind: "ok",
+    label: "Accepted",
+    reason: `Accepted by ${considered.map((c) => c.checker).join(", ")}.${moduleOnly ? " The kernel check was a module replay: the imported environment was trusted." : ""}`,
+  };
 }
 
 /**

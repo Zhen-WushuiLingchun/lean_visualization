@@ -18,14 +18,24 @@ export const DEFAULT_CHECKER_TIMEOUT_MS = 10 * 60_000;
 /** Every checker in canonical order: L1 first. */
 export const ALL_CHECKERS: readonly CheckerName[] = [...L1_CHECKERS, ...L2_CHECKERS];
 
+/** What a checker reads: the declaration's leanexport NDJSON, or the module's `.olean`. */
+export type CheckerInput = "export" | "module";
+
+export interface CheckerArgs {
+  exportFile: string;
+  nanodaConfig: string;
+  module: string;
+}
+
 export interface CheckerSpec {
   name: CheckerName;
   /** Binary name inside `<toolchain>/bin`, without `.exe`. */
   binary: string;
   level: "L1" | "L2";
-  /** Arguments after the binary (docs/CHECKERS.md). */
-  argv(exportFile: string, nanodaConfig: string): string[];
-  /** Line the checker prints on success; null when success is silent (nanoda). */
+  input: CheckerInput;
+  /** Arguments after the binary (docs/CHECKERS.md). Module checkers run as `lake env <binary> ...`. */
+  argv(a: CheckerArgs): string[];
+  /** Line the checker prints on success; null when success is silent. */
   success: RegExp | null;
   /** Exit-code map for non-zero exits. Codes not listed are `error`. */
   classifyNonZero(code: number, output: string): CheckerStatus;
@@ -37,6 +47,13 @@ export interface CheckerSpec {
 
 /** Kernel type-mismatch text, as printed by leanchecker and lean4lean. */
 export const MISMATCH_TEXT = /declaration type mismatch|but it is expected to have type/;
+
+/** leanchecker failures that are not verdicts (verified: a module without .olean exits 1). */
+const NOT_A_VERDICT = /Could not find any oleans|object file .* does not exist|unknown module prefix/i;
+
+export const LEANEXPORT_NOTE = "needs leanexport (bundled from Lean 4.35)";
+export const MODULE_REPLAY_NOTE =
+  "Replays the node's whole module from .olean with imports trusted (Lean ≥ 4.28)";
 
 const acceptsLine = /Lean default kernel accepts the solution/;
 
@@ -55,9 +72,23 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "leanchecker",
     binary: "leanchecker",
     level: "L1",
-    argv: (file) => ["--from-export", file],
+    input: "export",
+    argv: (a) => ["--from-export", a.exportFile],
     success: acceptsLine,
     classifyNonZero: exitOneRejects,
+    abortOnPanic: true,
+    rejectOnMismatchText: false,
+  },
+  "leanchecker-module": {
+    name: "leanchecker-module",
+    binary: "leanchecker",
+    level: "L1",
+    input: "module",
+    // `lake env leanchecker <Module>`: replays the module's declarations on top of its imports.
+    argv: (a) => [a.module],
+    // Silent on success (verified on v4.33.0 and v4.35.0-rc3).
+    success: null,
+    classifyNonZero: (code, output) => (code === 1 && !NOT_A_VERDICT.test(output) ? "rejected" : "error"),
     abortOnPanic: true,
     rejectOnMismatchText: false,
   },
@@ -65,7 +96,8 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "leanchecker-paranoid",
     binary: "leanchecker-paranoid",
     level: "L2",
-    argv: (file) => ["--from-export", file],
+    input: "export",
+    argv: (a) => ["--from-export", a.exportFile],
     success: acceptsLine,
     classifyNonZero: exitOneRejects,
     abortOnPanic: true,
@@ -75,8 +107,9 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "lean4lean",
     binary: "lean4lean",
     level: "L2",
+    input: "export",
     // Without --import lean4lean reads .olean files and fails with `incompatible header`.
-    argv: (file) => ["--import", file],
+    argv: (a) => ["--import", a.exportFile],
     success: /checked \d+ declarations/,
     classifyNonZero: exitOneRejects,
     // With LEAN_ABORT_ON_PANIC=1 its error printer panics and the process aborts (0xC0000409 on
@@ -88,7 +121,8 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "nanoda",
     binary: "nanoda_bin",
     level: "L2",
-    argv: (_file, config) => [config],
+    input: "export",
+    argv: (a) => [a.nanodaConfig],
     success: null,
     classifyNonZero: (code, output) => {
       // Rust panic. An unpermitted axiom is a refusal to judge, anything else is a rejection.
@@ -103,7 +137,8 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "con-leche",
     binary: "con-leche",
     level: "L2",
-    argv: (file) => [file],
+    input: "export",
+    argv: (a) => [a.exportFile],
     success: /con-leche: accepted \d+ declarations/,
     classifyNonZero: conClassify,
     abortOnPanic: true,
@@ -113,7 +148,8 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     name: "con-ron",
     binary: "con-ron",
     level: "L2",
-    argv: (file) => [file],
+    input: "export",
+    argv: (a) => [a.exportFile],
     success: /con-ron: accepted \d+ declarations/,
     classifyNonZero: conClassify,
     abortOnPanic: true,
@@ -123,6 +159,43 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
 
 export function checkerBinaryPath(binDir: string, checker: CheckerName): string {
   return path.join(binDir, exeName(CHECKER_SPECS[checker].binary));
+}
+
+export function leanexportPath(binDir: string): string {
+  return path.join(binDir, exeName("leanexport"));
+}
+
+export function hasLeanexport(toolchain: Pick<Toolchain, "binDir">): boolean {
+  return existsSync(leanexportPath(toolchain.binDir));
+}
+
+export function isExportBased(checker: CheckerName): boolean {
+  return CHECKER_SPECS[checker].input === "export";
+}
+
+export interface Availability {
+  available: boolean;
+  /** Resolved binary when available. */
+  path: string | null;
+  note: string | null;
+}
+
+/**
+ * A module checker needs its binary. An export-based checker needs its binary and `leanexport`
+ * (toolchains before 4.35 ship `leanchecker` but no `leanexport`).
+ */
+export function checkerAvailability(toolchain: Pick<Toolchain, "binDir">, checker: CheckerName): Availability {
+  const spec = CHECKER_SPECS[checker];
+  const bin = checkerBinaryPath(toolchain.binDir, checker);
+  const binExists = existsSync(bin);
+  if (spec.input === "module") {
+    return binExists
+      ? { available: true, path: bin, note: MODULE_REPLAY_NOTE }
+      : { available: false, path: null, note: `${spec.binary} not in this toolchain` };
+  }
+  if (!hasLeanexport(toolchain)) return { available: false, path: null, note: LEANEXPORT_NOTE };
+  if (!binExists) return { available: false, path: null, note: `${spec.binary} not in this toolchain` };
+  return { available: true, path: bin, note: null };
 }
 
 export interface SeenInOutput {
@@ -191,11 +264,14 @@ export function checkerEnvFor(checker: CheckerName, env: NodeJS.ProcessEnv): Nod
 }
 
 export interface CheckerContext {
-  toolchain: Pick<Toolchain, "binDir" | "checkerEnv">;
-  /** Absolute path of the NDJSON export. */
-  exportFile: string;
+  toolchain: Pick<Toolchain, "binDir" | "checkerEnv"> & Partial<Pick<Toolchain, "lake" | "env">>;
+  /** Absolute path of the NDJSON export (export-based checkers). */
+  exportFile?: string | null;
+  /** Module to replay (module checkers), and the project root to run `lake env` in. */
+  module?: string;
+  projectDir?: string;
   /** Transitive axioms of the node (for nanoda's permitted list). */
-  axioms: readonly string[];
+  axioms?: readonly string[];
   /** Where the nanoda config is written (next to the export). */
   nanodaConfigFile?: string;
   cwd?: string;
@@ -204,39 +280,67 @@ export interface CheckerContext {
   log?: (line: string) => void;
 }
 
+function unavailableResult(checker: CheckerName, command: string[]): CheckerResult {
+  return {
+    checker,
+    status: "unavailable",
+    exitCode: null,
+    durationMs: 0,
+    command,
+    stdoutTail: "",
+    stderrTail: "",
+    rejectedDecl: null,
+  };
+}
+
 export async function runChecker(checker: CheckerName, ctx: CheckerContext): Promise<CheckerResult> {
   const spec = CHECKER_SPECS[checker];
-  const bin = checkerBinaryPath(ctx.toolchain.binDir, checker);
-  const configFile = ctx.nanodaConfigFile ?? ctx.exportFile.replace(/\.ndjson$/i, "") + ".nanoda.json";
-  const command = [bin, ...spec.argv(ctx.exportFile, configFile)];
   const log = ctx.log ?? (() => {});
-  if (!existsSync(bin)) {
-    log(`${checker}: unavailable (${path.basename(bin)} not in toolchain)`);
-    return {
-      checker,
-      status: "unavailable",
-      exitCode: null,
-      durationMs: 0,
-      command,
-      stdoutTail: "",
-      stderrTail: "",
-      rejectedDecl: null,
-    };
+  const bin = checkerBinaryPath(ctx.toolchain.binDir, checker);
+  const avail = checkerAvailability(ctx.toolchain, checker);
+
+  let cmd: string;
+  let args: string[];
+  let cwd: string;
+  let env: NodeJS.ProcessEnv;
+  if (spec.input === "module") {
+    const lake = ctx.toolchain.lake ?? "lake";
+    const module = ctx.module ?? "";
+    cmd = lake;
+    args = ["env", spec.binary, ...spec.argv({ exportFile: "", nanodaConfig: "", module })];
+    if (!avail.available || !module || !ctx.projectDir) {
+      log(`${checker}: unavailable (${avail.note ?? "no module to replay"})`);
+      return unavailableResult(checker, [cmd, ...args]);
+    }
+    cwd = ctx.cwd ?? ctx.projectDir;
+    env = checkerEnvFor(checker, ctx.toolchain.env ?? ctx.toolchain.checkerEnv);
+  } else {
+    const exportFile = ctx.exportFile ?? "";
+    const configFile = ctx.nanodaConfigFile ?? exportFile.replace(/\.ndjson$/i, "") + ".nanoda.json";
+    cmd = bin;
+    args = spec.argv({ exportFile, nanodaConfig: configFile, module: ctx.module ?? "" });
+    if (!avail.available || !exportFile) {
+      log(`${checker}: unavailable (${avail.note ?? "no export"})`);
+      return unavailableResult(checker, [cmd, ...args]);
+    }
+    if (checker === "nanoda") {
+      await writeFile(configFile, JSON.stringify(nanodaConfig(exportFile, ctx.axioms ?? []), null, 2) + "\n", "utf8");
+    }
+    cwd = ctx.cwd ?? path.dirname(exportFile);
+    env = checkerEnvFor(checker, ctx.toolchain.checkerEnv);
   }
-  if (checker === "nanoda") {
-    await writeFile(configFile, JSON.stringify(nanodaConfig(ctx.exportFile, ctx.axioms), null, 2) + "\n", "utf8");
-  }
+
   const seen: SeenInOutput = { success: false, panic: false, mismatch: false };
   const scan = (text: string): void => {
     if (spec.success?.test(text)) seen.success = true;
     if (/\bPANIC\b/.test(text)) seen.panic = true;
     if (MISMATCH_TEXT.test(text)) seen.mismatch = true;
   };
-  log(`${checker}: start`);
+  log(spec.input === "module" ? `${checker}: replay module ${ctx.module}` : `${checker}: start`);
   const runner = ctx.runner ?? defaultRunner;
-  const r = await runner.run(bin, command.slice(1), {
-    cwd: ctx.cwd ?? path.dirname(ctx.exportFile),
-    env: checkerEnvFor(checker, ctx.toolchain.checkerEnv),
+  const r = await runner.run(cmd, args, {
+    cwd,
+    env,
     timeoutMs: ctx.timeoutMs ?? DEFAULT_CHECKER_TIMEOUT_MS,
     stdin: "ignore",
     onLine: (_stream, line) => {
@@ -255,7 +359,7 @@ export async function runChecker(checker: CheckerName, ctx: CheckerContext): Pro
     status,
     exitCode: r.exitCode,
     durationMs: r.durationMs,
-    command,
+    command: [cmd, ...args],
     stdoutTail: r.stdout,
     stderrTail: r.stderr,
     rejectedDecl,
@@ -264,6 +368,8 @@ export async function runChecker(checker: CheckerName, ctx: CheckerContext): Pro
 
 /** One entry point per checker, as listed in docs/CHECKERS.md. */
 export const runLeanchecker = (ctx: CheckerContext): Promise<CheckerResult> => runChecker("leanchecker", ctx);
+export const runLeancheckerModule = (ctx: CheckerContext): Promise<CheckerResult> =>
+  runChecker("leanchecker-module", ctx);
 export const runLeancheckerParanoid = (ctx: CheckerContext): Promise<CheckerResult> =>
   runChecker("leanchecker-paranoid", ctx);
 export const runLean4lean = (ctx: CheckerContext): Promise<CheckerResult> => runChecker("lean4lean", ctx);
@@ -272,21 +378,22 @@ export const runConLeche = (ctx: CheckerContext): Promise<CheckerResult> => runC
 export const runConRon = (ctx: CheckerContext): Promise<CheckerResult> => runChecker("con-ron", ctx);
 
 /**
- * Availability of every checker in the toolchain. The checkers have no safe `--version` flag
+ * Availability of every checker in the toolchain, with a note when a checker is missing or checks
+ * something other than the declaration's closure. The checkers have no safe `--version` flag
  * (`leanchecker --version` blocks), so the version reported is the toolchain's Lean version.
  */
 export function listCheckers(toolchain: Pick<Toolchain, "binDir" | "leanVersion"> | null): CheckerInfo[] {
   return ALL_CHECKERS.map((checker) => {
     const level = CHECKER_SPECS[checker].level;
-    if (!toolchain) return { checker, available: false, path: null, version: null, level };
-    const bin = checkerBinaryPath(toolchain.binDir, checker);
-    const available = existsSync(bin);
+    if (!toolchain) return { checker, available: false, path: null, version: null, level, note: "toolchain not resolved" };
+    const a = checkerAvailability(toolchain, checker);
     return {
       checker,
-      available,
-      path: available ? bin : null,
-      version: available && toolchain.leanVersion ? `toolchain ${toolchain.leanVersion}` : null,
+      available: a.available,
+      path: a.path,
+      version: a.available && toolchain.leanVersion ? `toolchain ${toolchain.leanVersion}` : null,
       level,
+      note: a.note,
     };
   });
 }

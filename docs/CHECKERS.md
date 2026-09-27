@@ -98,3 +98,25 @@ checker's job is typing). Alternatively `"unsafe_permit_all_axioms": true` with 
 - Exit-code map used by the server: `0` → accepted; `1` → rejected; `2` → declined (con-leche/con-ron);
   `101` → nanoda panic (rejected, or declined when stderr mentions `declaration not found in infer_const`);
   anything else → error. A timeout is `timeout`. A missing binary is `unavailable`.
+
+## Toolchains before 4.35 (verified 2026-09-27 on `v4.33.0` and `v4.35.0-rc3`, Windows 11)
+
+- `leanprover/lean4:v4.33.0` ships `leanchecker` but no `leanexport` and none of the external
+  kernels (`bin/` has only `leanchecker.exe` among them). Every export-based checker is therefore
+  unavailable there; `proofflow checkers` reports them with the note `needs leanexport (bundled from Lean 4.35)`.
+- The L1 fallback is module replay, schema name `leanchecker-module`: `lake env leanchecker <Module>`
+  run in the project root. It replays every declaration of that module from its `.olean` on top of
+  the imported environment (imports are trusted, not re-checked).
+  - Accept: exit 0 and **no output at all** (there is no success line).
+    `YMEYM.AffineChannel` (Mathlib-based, v4.33.0): 24.6 s to 31 s, most of it importing Mathlib.
+  - Reject: exit 1, on stderr: `leanchecker found a problem in Smoke.Hack` then
+    `uncaught exception: while replaying declaration 'Smoke.bogus': (kernel) declaration type mismatch, 'Smoke.bogus' has type True but it is expected to have type False`.
+    This is a module added with `set_option debug.skipKernelTC true` plus `addDecl` of an ill-typed theorem.
+    The verdict covers the whole module: an honest theorem in that module is rejected by module replay while
+    its own export closure is accepted by every export-based checker.
+  - A module without an `.olean` also exits 1 (`uncaught exception: Could not find any oleans for: X`);
+    the server maps that to `error`, not `rejected`.
+  - `leanchecker --help` (like `--version`) does not return; never call it.
+- Without an export, the server keys the cache on the sha256 of the module's `.olean`
+  (`.lake/build/lib/lean/<Mod/Path>.olean`), shares the replay result across all declarations of the
+  module, and reports `exportDecls: null`.

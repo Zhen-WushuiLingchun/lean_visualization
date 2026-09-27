@@ -1,4 +1,4 @@
-import { GraphFileSchema, type CheckerName, type CheckerResult, type CheckerStatus, type GraphFile, type Node, type VerifyResult } from "@proofflow/schema";
+import { GraphFileSchema, L1_CHECKERS, type CheckerInfo, type CheckerName, type CheckerResult, type CheckerStatus, type GraphFile, type Node, type VerifyResult } from "@proofflow/schema";
 import raw from "../public/fixtures/sample.json";
 
 /** The bundled sample, validated. */
@@ -95,4 +95,67 @@ export function result(checkers: CheckerResult[], extra: Partial<VerifyResult> =
     verdict: "accepted",
     ...extra,
   };
+}
+
+export function checkerInfo(checker: CheckerName, available: boolean, note: string | null = null): CheckerInfo {
+  return {
+    checker,
+    available,
+    path: available ? `C:/elan/bin/${checker}` : null,
+    version: available ? "4.35.0-rc3" : null,
+    level: (L1_CHECKERS as readonly string[]).includes(checker) ? "L1" : "L2",
+    note,
+  };
+}
+
+/** /api/checkers on Lean 4.35+: export replay available, module replay offered as an alternative. */
+export const CHECKERS_435: CheckerInfo[] = [
+  checkerInfo("leanchecker", true),
+  checkerInfo("leanchecker-module", false, "Not needed: leanexport is available."),
+  checkerInfo("leanchecker-paranoid", false, "Binary not found in this toolchain."),
+  checkerInfo("lean4lean", true),
+  checkerInfo("nanoda", true),
+  checkerInfo("con-leche", true),
+  checkerInfo("con-ron", true),
+];
+
+/** /api/checkers on an older toolchain without leanexport. */
+export const CHECKERS_OLD: CheckerInfo[] = [
+  checkerInfo("leanchecker", false, "leanexport is missing (Lean < 4.35)."),
+  checkerInfo("leanchecker-module", true, "Replays the whole module from its .olean; imports are trusted."),
+  checkerInfo("leanchecker-paranoid", false, "Needs leanexport."),
+  checkerInfo("lean4lean", false, "Needs leanexport."),
+  checkerInfo("nanoda", false, "Needs leanexport."),
+  checkerInfo("con-leche", false, "Needs leanexport."),
+  checkerInfo("con-ron", false, "Needs leanexport."),
+];
+
+/** /api/checkers when no kernel replay is possible. */
+export const CHECKERS_NONE: CheckerInfo[] = CHECKERS_OLD.map((c) =>
+  c.checker === "leanchecker-module" ? checkerInfo("leanchecker-module", false, "lake env leanchecker failed: toolchain not found.") : c,
+);
+
+/** `layers` columns of `perLayer` theorems, each using two nodes of the previous column, plus one final theorem. */
+export function layeredGraph(layers: number, perLayer: number): GraphFile {
+  const nodes: Node[] = [];
+  for (let i = 0; i < layers; i++) {
+    for (let j = 0; j < perLayer; j++) {
+      const proof = i === 0 ? [] : [`T.l${i - 1}n${j}`, `T.l${i - 1}n${(j + 1) % perLayer}`];
+      nodes.push(node(`T.l${i}n${j}`, { proof }));
+    }
+  }
+  nodes.push(node("T.final", { proof: Array.from({ length: perLayer }, (_, j) => `T.l${layers - 1}n${j}`) }));
+  return graphOf(nodes, ["T.final"]);
+}
+
+/** `sinks` final theorems, each on top of its own chain of `depth` lemmas. */
+export function chainsGraph(sinks: number, depth: number): GraphFile {
+  const nodes: Node[] = [];
+  const sinkIds: string[] = [];
+  for (let k = 0; k < sinks; k++) {
+    for (let i = 0; i < depth; i++) nodes.push(node(`T.c${k}x${i}`, { proof: i === 0 ? [] : [`T.c${k}x${i - 1}`] }));
+    nodes.push(node(`T.s${k}`, { proof: [`T.c${k}x${depth - 1}`] }));
+    sinkIds.push(`T.s${k}`);
+  }
+  return graphOf(nodes, sinkIds);
 }
