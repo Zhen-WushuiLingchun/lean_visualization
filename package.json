@@ -1,0 +1,21 @@
+{
+  "name": "proofflow-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ProofFlow: auditable axiom-to-theorem workflow graphs for Lean 4 projects with per-node kernel verification",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.17.0",
+  "scripts": {
+    "build": "pnpm -r --filter @proofflow/schema build && pnpm -r --filter @proofflow/server build && pnpm -r --filter @proofflow/web build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "proofflow": "node packages/server/dist/cli.js",
+    "dev:web": "pnpm --filter @proofflow/web dev",
+    "dev:server": "pnpm --filter @proofflow/server dev"
+  }
+}

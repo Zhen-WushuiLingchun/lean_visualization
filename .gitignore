@@ -1,0 +1,22 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+
+# Lean
+.lake/
+*.olean
+*.ilean
+*.trace
+*.hash
+
+# ProofFlow runtime artefacts inside audited projects
+.proofflow/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
