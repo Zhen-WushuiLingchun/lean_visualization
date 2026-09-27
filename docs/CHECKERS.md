@@ -51,9 +51,12 @@ Observed timings on a 7-declaration closure: all under 0.3 s. lean4lean on a 297
   `incompatible header`. Always use `--import <ndjson>`.
 - `leanchecker` invoked with a module name replays that module from `.olean`s; we do not use that
   mode. `--fresh <Module>` replays everything into a fresh environment (slow, whole-module).
-- Rejection by `nanoda` is a panic (exit 101). Treat exit 101 as `rejected` when stderr contains
-  `assertion failed` or `type` errors, and as `declined` when it contains `declaration not found in
-  infer_const` (unpermitted axiom). Any other non-zero exit is `error`.
+- Rejection by `nanoda` is a panic (exit 101), but so is any internal crash. The server classifies
+  exit 101 as: `declined` when stderr contains `declaration not found in infer_const` (unpermitted
+  axiom); `rejected` only when it contains known typechecking-failure text (`assertion failed`,
+  `def_eq`, `type mismatch`, `infer`; verified example `assertion failed: self.def_eq(u, v)`);
+  otherwise `error` with the stderr kept (a generic panic such as `Option::unwrap()` on `None` is a
+  checker crash, not a counterexample). Any other non-zero exit is `error`.
 
 ### nanoda config file
 
@@ -96,7 +99,8 @@ checker's job is typing). Alternatively `"unsafe_permit_all_axioms": true` with 
 - Every checker must be run with a timeout (default 600 s) and `stdin` closed (`stdio: ["ignore", "pipe", "pipe"]`);
   some binaries block on an open stdin.
 - Exit-code map used by the server: `0` → accepted; `1` → rejected; `2` → declined (con-leche/con-ron);
-  `101` → nanoda panic (rejected, or declined when stderr mentions `declaration not found in infer_const`);
+  `101` → nanoda panic (declined when stderr mentions `declaration not found in infer_const`, rejected
+  only with typechecking-failure text, otherwise error);
   anything else → error. A timeout is `timeout`. A missing binary is `unavailable`.
 
 ## Toolchains before 4.35 (verified 2026-09-27 on `v4.33.0` and `v4.35.0-rc3`, Windows 11)

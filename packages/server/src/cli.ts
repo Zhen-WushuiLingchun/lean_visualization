@@ -26,6 +26,13 @@ function positiveInt(value: string): number {
   return n;
 }
 
+/** Timeout in seconds; 0 means no wall-clock limit (the process is never killed for time). */
+function seconds(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) throw new InvalidArgumentError("Expected a whole number of seconds (0 = no limit).");
+  return n;
+}
+
 function port(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 65535) throw new InvalidArgumentError("Expected a port number.");
@@ -38,7 +45,7 @@ function timeoutMs(flag: number | undefined, envName: string, fallbackMs: number
   const raw = process.env[envName];
   if (raw) {
     const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return n * 1000;
+    if (Number.isFinite(n) && n >= 0) return n * 1000; // 0 = no wall-clock limit
   }
   return fallbackMs;
 }
@@ -111,6 +118,14 @@ function printVerify(r: VerifyResult): void {
       `export   ${r.exportDecls} decls, ${formatBytes(r.exportBytes)}, sha256 ${r.exportHash.slice(0, 12)}, ${formatMs(r.exportDurationMs)}`,
     );
   }
+  const a = r.exportAudit;
+  if (a) {
+    console.log(
+      `target   ${a.targetFound ? `found (${a.targetKind ?? "?"})` : "NOT FOUND"}, type sha256 ${a.targetTypeSha256 ?? "n/a"}, ` +
+        `axioms: ${a.axioms.length ? a.axioms.join(", ") : "none"}, standard only: ${a.standardAxiomsOnly ? "yes" : "no"}`,
+    );
+  }
+  console.log(`binding  .olean sha256 ${r.binding.oleanSha256 ?? "unknown"}, ${r.binding.toolchain ?? "toolchain unknown"}`);
   console.log(`lean     ${r.leanVersion}`);
   console.log("");
   console.log(`${pad("checker", 22)}${pad("status", 13)}${pad("exit", 6)}${pad("time", 10)}note`);
@@ -177,8 +192,8 @@ function addExtractFlags(cmd: Command): Command {
     .option("--no-build", "skip lake build")
     .option("--no-statements", "do not pretty-print statements")
     .option("--statement-max-chars <n>", "truncate statements to n characters", positiveInt)
-    .option("--timeout <seconds>", "extractor timeout (default 1800)", positiveInt)
-    .option("--build-timeout <seconds>", "lake build timeout (default 3600)", positiveInt);
+    .option("--timeout <seconds>", "extractor timeout (default 1800; 0 = no limit)", seconds)
+    .option("--build-timeout <seconds>", "lake build timeout (default 3600; 0 = no limit)", seconds);
 }
 
 const program = new Command();
@@ -219,8 +234,8 @@ addExtractFlags(
     .option("--host <host>", "interface to bind", "127.0.0.1")
     .option("--open", "open the browser")
     .option("--no-extract", "do not extract when graph.json is missing")
-    .option("--export-timeout <seconds>", "leanexport timeout (default 600)", positiveInt)
-    .option("--checker-timeout <seconds>", "per-checker timeout (default 600)", positiveInt),
+    .option("--export-timeout <seconds>", "leanexport timeout (default 600; 0 = no wall-clock kill)", seconds)
+    .option("--checker-timeout <seconds>", "per-checker timeout (default 600; 0 = no wall-clock kill)", seconds),
 ).action(async (flags: ServeFlags) => {
   try {
     const project = await detectProject(flags.project);
@@ -281,8 +296,8 @@ program
   .option("--force", "re-export and ignore cached results")
   .option("--json", "print the VerifyResult as JSON")
   .option("--verbose", "stream logs to stderr (also with --json)")
-  .option("--export-timeout <seconds>", "leanexport timeout (default 600)", positiveInt)
-  .option("--checker-timeout <seconds>", "per-checker timeout (default 600)", positiveInt)
+  .option("--export-timeout <seconds>", "leanexport timeout (default 600; 0 = no wall-clock kill)", seconds)
+  .option("--checker-timeout <seconds>", "per-checker timeout (default 600; 0 = no wall-clock kill)", seconds)
   .action(async (decl: string, flags: VerifyFlags) => {
     try {
       const project = await detectProject(flags.project);

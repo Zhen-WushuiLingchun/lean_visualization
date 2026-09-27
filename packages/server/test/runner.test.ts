@@ -47,6 +47,12 @@ describe("ProcessRunner (real child processes, no shell)", () => {
     expect(r.durationMs).toBeLessThan(15_000);
   });
 
+  it("never kills for time when the timeout is 0", async () => {
+    const r = await runner.run(node, ["-e", "setTimeout(() => process.exit(7), 600)"], { timeoutMs: 0 });
+    expect(r.timedOut).toBe(false);
+    expect(r.exitCode).toBe(7);
+  });
+
   it("reports a missing binary as a spawn error", async () => {
     const r = await runner.run("definitely-not-a-binary-proofflow", [], { timeoutMs: 5000 });
     expect(r.spawnError).toBe("ENOENT");

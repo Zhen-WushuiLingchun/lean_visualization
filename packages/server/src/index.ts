@@ -17,6 +17,8 @@ export {
   runLean4lean,
   runLeanchecker,
   runLeancheckerModule,
+  binarySha256,
+  NANODA_TYPE_FAILURE,
   runLeancheckerParanoid,
   runNanoda,
   type CheckerContext,
@@ -47,6 +49,7 @@ export {
 export { JobManager, Limiter, RWLock, type JobContext } from "./jobs.js";
 export {
   ProjectError,
+  toolchainFileSignature,
   ToolchainCache,
   ToolchainError,
   baseEnv,
@@ -68,6 +71,7 @@ export { ProcessRunner, defaultRunner, type RunOptions, type RunResult, type Run
 export { GraphStore, graphPathOf } from "./store.js";
 export {
   VerifyError,
+  toolchainIdentity,
   allCheckers,
   availableCheckers,
   defaultCheckers,
@@ -80,3 +84,4 @@ export {
   type CheckerSelection,
   type VerifyOptions,
 } from "./verify.js";
+export { auditExport, parseNameComponents, renderName, type AuditPass, type ExportAudit } from "./audit.js";

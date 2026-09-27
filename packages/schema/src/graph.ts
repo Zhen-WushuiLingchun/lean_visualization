@@ -215,9 +215,10 @@ export function isStandardAxiom(name: string): boolean {
  * mints a per-use auxiliary axiom named `<decl>._native.native_decide.ax_<i>_<j>` (verified on
  * v4.35.0-rc3, where `#print axioms` lists only that axiom).
  */
+const NATIVE_DECIDE_MINTED = /\._native\.native_decide\.ax_\d+_\d+$/;
 export function isNativeDecideAxiom(name: string): boolean {
   if ((NATIVE_DECIDE_AXIOMS as readonly string[]).includes(name)) return true;
-  return name.includes("._native.");
+  return NATIVE_DECIDE_MINTED.test(name);
 }
 
 /** Classify an axiom name the way the viewer colours it. */

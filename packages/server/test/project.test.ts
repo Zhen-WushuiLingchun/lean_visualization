@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ProjectError,
+  ToolchainCache,
   ToolchainError,
   baseEnv,
   defaultLocalPrefixesOf,
@@ -244,6 +245,35 @@ describe("resolveToolchain", () => {
     expect(tc.checkerEnv[pathKey(tc.checkerEnv)]?.split(path.delimiter)[0]).toBe(tc.binDir);
     expect(runner.calls[0]?.opts.cwd).toBe(project.dir);
     expect(runner.calls[0]?.opts.stdin).toBe("ignore");
+  });
+
+  it("ToolchainCache re-resolves when lean-toolchain changes", async () => {
+    dir = tempDir();
+    const elanBin = path.join(dir, "elan", "bin");
+    mkdirSync(elanBin, { recursive: true });
+    writeFileSync(path.join(elanBin, exeName("lake")), "", { mode: 0o755 });
+    const proj = path.join(dir, "proj");
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(path.join(proj, "lakefile.toml"), 'name = "p"\n[[lean_lib]]\nname = "P"\n');
+    writeFileSync(path.join(proj, "lean-toolchain"), "leanprover/lean4:v4.33.0\n");
+    const project = await detectProject(proj);
+    let resolutions = 0;
+    const runner = new FakeRunner(({ args }) => {
+      if (args.join(" ") === "env lean --print-prefix") {
+        resolutions++;
+        return { stdout: path.join(dir, `tc${resolutions}`) + "\n" };
+      }
+      return { exitCode: 1 };
+    });
+    const cache = new ToolchainCache({ runner, env: { PATH: "", ELAN_HOME: path.join(dir, "elan") } });
+    const a = await cache.get(project);
+    expect((await cache.get(project)).prefix).toBe(a.prefix);
+    expect(resolutions).toBe(1);
+    writeFileSync(path.join(proj, "lean-toolchain"), "leanprover/lean4:v4.35.0-rc3\n");
+    const b = await cache.get(project);
+    expect(resolutions).toBe(2);
+    expect(b.prefix).not.toBe(a.prefix);
+    expect(b.leanVersion).toBe("4.35.0-rc3"); // from the new lean-toolchain, since `lean --version` failed
   });
 
   it("reports a missing lake clearly", async () => {

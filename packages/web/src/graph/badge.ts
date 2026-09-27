@@ -1,4 +1,4 @@
-import { L1_CHECKERS, type CheckerResult, type VerifyResult } from "@proofflow/schema";
+import { isStandardAxiom, L1_CHECKERS, type CheckerResult, type VerifyResult } from "@proofflow/schema";
 
 /**
  * Verification badge, exactly as AGENTS.md section 5 and docs/VERIFICATION.md:
@@ -6,6 +6,10 @@ import { L1_CHECKERS, type CheckerResult, type VerifyResult } from "@proofflow/s
  * `leanchecker-module`) accepted and every other requested checker accepted;
  * any rejection is red; error or timeout is amber; declined or unavailable is a grey dash with the
  * reason. The server's `verdict` is shown in the panel but never used to paint the badge green.
+ *
+ * The export audit (facts parsed from the export itself) overrides and annotates this: if the
+ * requested declaration is not in the export, no checker result speaks for it and the badge is red
+ * "Export mismatch"; if the closure has non-standard axioms, the tooltip names them.
  */
 
 export type BadgeKind = "none" | "running" | "ok" | "rejected" | "error" | "dash";
@@ -37,8 +41,30 @@ function describe(r: CheckerResult): string {
   return `${r.checker} ${r.status}${code}${why ? `: ${why}` : ""}`;
 }
 
+/** Axioms in the export's closure outside Lean's standard three (from the export audit). */
+export function nonStandardAxioms(result: VerifyResult): string[] {
+  return result.exportAudit ? result.exportAudit.axioms.filter((a) => !isStandardAxiom(a)) : [];
+}
+
 export function badgeOf(result: VerifyResult | null | undefined): Badge {
   if (!result) return NO_BADGE;
+  const audit = result.exportAudit;
+  if (audit && !audit.targetFound) {
+    return {
+      kind: "rejected",
+      label: "Export mismatch",
+      reason: `The export does not contain ${result.decl}, so no checker result speaks for it.`,
+    };
+  }
+  const base = checkerBadge(result);
+  if (audit && !audit.standardAxiomsOnly) {
+    const ns = nonStandardAxioms(result);
+    return { ...base, reason: `${base.reason} Non-standard axioms in the export: ${ns.length > 0 ? ns.join(", ") : "(unnamed)"}.` };
+  }
+  return base;
+}
+
+function checkerBadge(result: VerifyResult): Badge {
   const considered = result.checkers.filter((c) => c.status !== "skipped");
   if (considered.length === 0) return { kind: "dash", label: "Nothing ran", reason: "No checker was run for this result." };
 

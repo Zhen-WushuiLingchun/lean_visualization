@@ -8,7 +8,7 @@ import { buildIndex } from "../src/graph/graphIndex";
 import { assignLayers } from "../src/graph/layers";
 import { runLayout } from "../src/graph/layout";
 import { measureAll } from "../src/graph/measure";
-import { chainsGraph, CHECKERS_435, CHECKERS_NONE, CHECKERS_OLD, layeredGraph, result, row, sample } from "./fixtures";
+import { audit, chainsGraph, CHECKERS_435, CHECKERS_NONE, CHECKERS_OLD, layeredGraph, result, row, sample } from "./fixtures";
 
 const json = (v: unknown, status = 200): Response => new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
 
@@ -90,6 +90,7 @@ describe("kernel checker availability", () => {
     expect(within(panel).getByText(/Replays the whole module from its .olean/)).toBeTruthy();
     await waitFor(() => expect(within(panel).getByText(/Module replay of/)).toBeTruthy());
     expect(within(panel).queryByText(/declarations, exported in/)).toBeNull();
+    expect(within(within(panel).getByLabelText("Export audit")).getByText("No export (module replay).")).toBeTruthy();
     expect(within(panel).getByText("Accepted")).toBeTruthy();
     // The checker legend in the side bar shows the label too.
     expect(within(screen.getByLabelText("Project summary")).getByText(/kernel, module replay/)).toBeTruthy();
@@ -113,6 +114,55 @@ function viewport(): { x: number; y: number; zoom: number } {
   const m = /translate\(([-0-9.e]+)px,\s*([-0-9.e]+)px\)\s*scale\(([-0-9.e]+)\)/.exec(t);
   return m ? { x: Number(m[1]), y: Number(m[2]), zoom: Number(m[3]) } : { x: 0, y: 0, zoom: 1 };
 }
+
+describe("export audit", () => {
+  const openPanel = async (name: string): Promise<HTMLElement> => {
+    await expectGraphShowsTargets();
+    fireEvent.click(within(screen.getByLabelText("Dependency graph")).getAllByText(name)[0] as HTMLElement);
+    return screen.findByLabelText("Node details");
+  };
+
+  it("shows the audit, the .olean binding and checker provenance", async () => {
+    const decl = "Demo.Main.clean_result";
+    const r = result([row("leanchecker", "accepted", { binarySha256: "feedfacecafebeef00112233", ranAt: "2026-09-27T10:00:05Z" })], {
+      decl,
+      module: "Demo.Main",
+      exportAudit: audit(),
+      binding: { oleanSha256: "aabbccddeeff00112233445566778899", toolchain: "leanprover/lean4:v4.35.0-rc3" },
+    });
+    mockFetch(true, { results: { [decl]: [r] } });
+    render(<App />);
+    const panel = await openPanel("clean_result");
+    const box = await within(panel).findByLabelText("Export audit");
+    expect(within(box).getByText("Target found: yes (thm)")).toBeTruthy();
+    expect(within(box).getByText("0123456789ab\u2026").getAttribute("title")).toBe(audit().targetTypeSha256);
+    expect(within(box).getByText(/Axioms in closure: Classical.choice, Quot.sound, propext/)).toBeTruthy();
+    expect(within(box).getByText("standard only")).toBeTruthy();
+    expect(within(box).getByText("Declarations: 183")).toBeTruthy();
+    expect(within(panel).getByText(/Bound to .olean/).textContent).toContain("aabbccddeeff\u2026 on leanprover/lean4:v4.35.0-rc3");
+    fireEvent.click(within(panel).getAllByRole("button", { name: "Log" })[0] as HTMLElement);
+    const prov = within(panel).getByText(/Binary sha256/);
+    expect(prov.textContent).toContain("feedfacecafe\u2026");
+    expect(prov.textContent).toContain("ran ");
+  });
+
+  it("flags a missing target and non-standard axioms in red", async () => {
+    const decl = "Demo.Main.clean_result";
+    const r = result([row("leanchecker", "accepted")], {
+      decl,
+      module: "Demo.Main",
+      exportAudit: audit({ targetFound: false, targetKind: null, targetTypeSha256: null, axioms: ["Demo.Axioms.oracle", "propext"], standardAxiomsOnly: false }),
+    });
+    mockFetch(true, { results: { [decl]: [r] } });
+    render(<App />);
+    const panel = await openPanel("clean_result");
+    const box = await within(panel).findByLabelText("Export audit");
+    expect(within(box).getByText("Target NOT found in export").className).toContain("pf-error");
+    expect(within(box).getByText("Demo.Axioms.oracle").className).toContain("pf-flag--bad");
+    expect(within(panel).getByText("Export mismatch")).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-id="Demo.Main.clean_result"] .pf-vbadge')?.getAttribute("data-badge")).toBe("rejected"));
+  });
+});
 
 describe("big cones", () => {
   it("fits a 1000-node cone after the fast layout so that every node is in view", async () => {

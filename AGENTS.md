@@ -124,6 +124,16 @@ A node is shown **green** only when L1 is accepted and every *requested* L2 chec
 displayed regardless (a `sorry`-tainted theorem can still be kernel-accepted; that is exactly what the
 audience needs to see).
 
+An external read-only audit (a downstream project's `docs/audits/2026-09-27-lean435-checker-scope.md`)
+found seven trust gaps in the first cut; all are fixed and encoded in the schema and tests:
+`verdictOf` requires an accepted L1; exports are bound to the module `.olean` sha256 and the toolchain,
+never reused on timestamps alone; the export itself is parsed to confirm the target declaration, hash
+its type and list its exact axioms (`exportAudit`); checker results carry `binarySha256` and are only
+reused for the same binary; nanoda's exit 101 is a rejection only with recognised failure text;
+native_decide axioms are matched by the exact minted form; timeouts can be disabled. The rule for any
+future change: an acceptance claim must be reproducible from the recorded hashes alone
+(`docs/VERIFICATION.md`, "What an `accepted` verdict means").
+
 ## 6. Working rules
 
 - Run the real pipeline on `examples/toy` before claiming anything works:

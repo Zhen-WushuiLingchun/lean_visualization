@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants, existsSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -658,17 +658,38 @@ export async function resolveToolchain(project: ProjectInfo, opts: ToolchainOpti
 }
 
 /** Caches one toolchain resolution per project directory. */
+/** Content and mtime of `lean-toolchain`; a change means the toolchain must be resolved again. */
+export function toolchainFileSignature(projectDir: string): string {
+  const file = path.join(projectDir, "lean-toolchain");
+  try {
+    const st = statSync(file);
+    return `${st.mtimeMs}:${readFileSync(file, "utf8").trim()}`;
+  } catch {
+    return "missing";
+  }
+}
+
+/**
+ * Caches one toolchain resolution per project directory, re-resolving whenever the project's
+ * `lean-toolchain` file changes (content or mtime), so a long-lived server follows a switch.
+ */
 export class ToolchainCache {
-  private readonly cache = new Map<string, Promise<Toolchain>>();
+  private readonly cache = new Map<string, { signature: string; toolchain: Promise<Toolchain> }>();
   constructor(private readonly opts: ToolchainOptions = {}) {}
   get(project: ProjectInfo): Promise<Toolchain> {
-    let p = this.cache.get(project.dir);
-    if (!p) {
-      p = resolveToolchain(project, this.opts);
-      p.catch(() => this.cache.delete(project.dir));
-      this.cache.set(project.dir, p);
-    }
-    return p;
+    const signature = toolchainFileSignature(project.dir);
+    const hit = this.cache.get(project.dir);
+    if (hit && hit.signature === signature) return hit.toolchain;
+    const toolchain = resolveToolchain(
+      { ...project, toolchain: signature === "missing" ? null : signature.slice(signature.indexOf(":") + 1) },
+      this.opts,
+    );
+    const entry = { signature, toolchain };
+    toolchain.catch(() => {
+      if (this.cache.get(project.dir) === entry) this.cache.delete(project.dir);
+    });
+    this.cache.set(project.dir, entry);
+    return toolchain;
   }
   clear(): void {
     this.cache.clear();

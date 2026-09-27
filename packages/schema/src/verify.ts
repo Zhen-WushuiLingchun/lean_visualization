@@ -44,6 +44,10 @@ export const CheckerResultSchema = z.object({
   durationMs: z.number().nonnegative(),
   /** argv actually executed, first element is the resolved binary path. */
   command: z.array(z.string()),
+  /** sha256 of the checker binary that produced this result; null when unavailable. Part of the cache identity. */
+  binarySha256: z.string().nullable().default(null),
+  /** ISO-8601 time the checker finished. */
+  ranAt: z.string().nullable().default(null),
   /** Last ~4 KB of each stream. */
   stdoutTail: z.string(),
   stderrTail: z.string(),
@@ -76,18 +80,54 @@ export const VerifyResultSchema = z.object({
   /** ISO-8601. */
   verifiedAt: z.string(),
   leanVersion: z.string(),
+  /**
+   * Binding of the export to the project state it was taken from: sha256 of the module's `.olean`
+   * at export time and the toolchain identity. An export is reused only when both still match.
+   */
+  binding: z
+    .object({
+      oleanSha256: z.string().nullable(),
+      toolchain: z.string().nullable(),
+    })
+    .default({ oleanSha256: null, toolchain: null }),
+  /**
+   * Independent facts parsed from the NDJSON export itself (not from graph.json): whether the
+   * requested declaration is present, its record kind, a stable hash of its type expression, and
+   * the exact set of axiom names in the closure. `standardAxiomsOnly` is true iff that set is a
+   * subset of {propext, Classical.choice, Quot.sound}. Null when there was no export.
+   */
+  exportAudit: z
+    .object({
+      targetFound: z.boolean(),
+      targetKind: z.string().nullable(),
+      targetTypeSha256: z.string().nullable(),
+      axioms: z.array(z.string()),
+      standardAxiomsOnly: z.boolean(),
+      declCount: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .default(null),
   checkers: z.array(CheckerResultSchema),
   verdict: VerdictSchema,
 });
 export type VerifyResult = z.infer<typeof VerifyResultSchema>;
 
-/** Derive the verdict from checker results. Skipped checkers are ignored. */
+/**
+ * Derive the verdict from checker results. Skipped checkers are ignored. `accepted` requires that
+ * at least one L1 kernel replay (`leanchecker` or `leanchecker-module`) accepted AND every other
+ * considered checker accepted; L2 acceptances alone are `partial`. This is the same rule the viewer
+ * uses for the green badge, so CLI exit codes and badges never disagree.
+ */
 export function verdictOf(results: readonly CheckerResult[]): Verdict {
   const considered = results.filter((r) => r.status !== "skipped");
   if (considered.some((r) => r.status === "rejected")) return "rejected";
   if (considered.some((r) => r.status === "error" || r.status === "timeout")) return "error";
   if (considered.some((r) => r.status === "unavailable" || r.status === "declined")) return "partial";
   if (considered.length === 0) return "partial";
+  const l1Accepted = considered.some(
+    (r) => (L1_CHECKERS as readonly string[]).includes(r.checker) && r.status === "accepted",
+  );
+  if (!l1Accepted) return "partial";
   return "accepted";
 }
 

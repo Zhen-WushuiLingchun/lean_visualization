@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CheckerName, GraphFile } from "@proofflow/schema";
+import { parseNameComponents } from "../src/audit.js";
 import { ALL_CHECKERS, CHECKER_SPECS } from "../src/checkers.js";
 import { exeName, type ProjectInfo, type Toolchain } from "../src/project.js";
 import { TAIL_LIMIT, type RunOptions, type RunResult, type Runner } from "../src/runner.js";
@@ -128,16 +129,46 @@ export function fakeOlean(projectDir: string, mod: string, content = `olean of $
 export const EXPORT_META =
   '{"meta":{"exporter":{"name":"lean4export","version":"3.1.0"},"format":{"version":"3.1.0"},"lean":{"githash":"470d5ce","version":"4.35.0-rc3"}}}';
 
-/** A tiny export whose content depends on `decl`, so different decls hash differently. */
-export function fakeExport(decl: string): string {
-  return [
-    EXPORT_META,
-    `{"in":1,"str":{"pre":0,"str":${JSON.stringify(decl)}}}`,
-    '{"ie":0,"sort":1}',
-    '{"axiom":{"isUnsafe":false,"levelParams":[],"name":1,"type":0}}',
-    '{"thm":{"all":[1],"levelParams":[],"name":1,"type":0,"value":0}}',
-    "",
-  ].join("\n");
+export interface FakeExportOptions {
+  /** Axioms in the closure (default: propext). */
+  axioms?: string[];
+  /** Export a different theorem instead of `decl` (the target is then missing). */
+  omitTarget?: boolean;
+}
+
+/**
+ * A tiny well-formed export (format 3.1.0) whose name table spells `decl` component by component:
+ * the axioms, then `theorem decl : Prop`. Its content depends on `decl`, so hashes differ per decl.
+ */
+export function fakeExport(decl: string, opts: FakeExportOptions = {}): string {
+  const lines = [EXPORT_META];
+  const ids = new Map<string, number>();
+  let next = 0;
+  const nameId = (name: string): number => {
+    let pre = 0;
+    let key = "";
+    for (const c of parseNameComponents(name)) {
+      key += `\u0000${String(c)}`;
+      let id = ids.get(key);
+      if (id === undefined) {
+        id = ++next;
+        ids.set(key, id);
+        lines.push(
+          typeof c === "number"
+            ? `{"in":${id},"num":{"i":${c},"pre":${pre}}}`
+            : `{"in":${id},"str":{"pre":${pre},"str":${JSON.stringify(c)}}}`,
+        );
+      }
+      pre = id;
+    }
+    return pre;
+  };
+  const axiomIds = (opts.axioms ?? ["propext"]).map(nameId);
+  const target = nameId(opts.omitTarget ? `${decl}_other` : decl);
+  lines.push('{"ie":0,"sort":0}');
+  for (const a of axiomIds) lines.push(`{"axiom":{"isUnsafe":false,"levelParams":[],"name":${a},"type":0}}`);
+  lines.push(`{"thm":{"all":[${target}],"levelParams":[],"name":${target},"type":0,"value":0}}`);
+  return lines.join("\n") + "\n";
 }
 
 /** Standard replies for each checker's success, per docs/CHECKERS.md. */

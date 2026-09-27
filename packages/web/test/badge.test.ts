@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { badgeOf, effectiveResult } from "../src/graph/badge";
 import { covers } from "../src/state/verifyStore";
-import { result, row } from "./fixtures";
+import { audit, result, row } from "./fixtures";
 
 describe("badgeOf", () => {
   it("is green only when L1 and every requested checker accepted", () => {
@@ -47,6 +47,23 @@ describe("badgeOf", () => {
   });
   it("ignores the server verdict", () => {
     expect(badgeOf(result([row("lean4lean", "accepted")], { verdict: "accepted" })).kind).toBe("dash");
+  });
+  it("is red Export mismatch when the target is missing from the export, whatever the checkers say", () => {
+    const b = badgeOf(result([row("leanchecker", "accepted"), row("nanoda", "accepted")], { exportAudit: audit({ targetFound: false, targetKind: null, targetTypeSha256: null }) }));
+    expect(b.kind).toBe("rejected");
+    expect(b.label).toBe("Export mismatch");
+    expect(b.reason).toContain("Demo.x");
+    expect(badgeOf(result([row("leanchecker", "error")], { exportAudit: audit({ targetFound: false }) })).label).toBe("Export mismatch");
+  });
+  it("keeps its kind but names non-standard axioms from the export audit", () => {
+    const withCustom = audit({ axioms: ["Demo.Axioms.oracle", "propext", "sorryAx"], standardAxiomsOnly: false });
+    const ok = badgeOf(result([row("leanchecker", "accepted")], { exportAudit: withCustom }));
+    expect(ok.kind).toBe("ok");
+    expect(ok.reason).toContain("Non-standard axioms in the export: Demo.Axioms.oracle, sorryAx.");
+    const dash = badgeOf(result([row("leanchecker", "accepted"), row("con-leche", "declined")], { exportAudit: withCustom }));
+    expect(dash.kind).toBe("dash");
+    expect(dash.reason).toContain("Demo.Axioms.oracle");
+    expect(badgeOf(result([row("leanchecker", "accepted")], { exportAudit: audit() })).reason).not.toContain("Non-standard");
   });
   it("has no badge without a result", () => {
     expect(badgeOf(null).kind).toBe("none");

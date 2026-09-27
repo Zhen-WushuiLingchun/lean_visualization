@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { L1_CHECKERS, L2_CHECKERS, classifyAxiom, type CheckerName, type CheckerResult, type Node } from "@proofflow/schema";
+import { L1_CHECKERS, L2_CHECKERS, classifyAxiom, type CheckerName, type CheckerResult, type Node, type VerifyResult } from "@proofflow/schema";
 import { fetchSource, type SourceSnippet } from "../api/client";
-import { badgeOf, effectiveResult, type BadgeKind } from "../graph/badge";
+import { badgeOf, effectiveResult, nonStandardAxioms, type BadgeKind } from "../graph/badge";
 import { axiomColorKey, kindColorKey, kindLabel } from "../graph/colors";
 import { ancestorsInView, type Cone, type ViewNode } from "../graph/cone";
 import type { Layering } from "../graph/layers";
@@ -16,6 +16,51 @@ function fmtMs(ms: number): string {
 
 function fmtBytes(b: number): string {
   return b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** First 12 hex characters and an ellipsis; the full value goes in a tooltip. */
+function short(hash: string): string {
+  return hash.length > 12 ? `${hash.slice(0, 12)}…` : hash;
+}
+
+/** Facts parsed by the server from the export itself, independent of graph.json. */
+function ExportAudit({ result }: { result: VerifyResult }) {
+  const a = result.exportAudit;
+  if (!a) {
+    return (
+      <div className="pf-audit" aria-label="Export audit">
+        <h3>Export audit</h3>
+        <p className="pf-note">No export (module replay).</p>
+      </div>
+    );
+  }
+  const ns = nonStandardAxioms(result);
+  return (
+    <div className="pf-audit" aria-label="Export audit">
+      <h3>Export audit</h3>
+      {a.targetFound ? (
+        <p>Target found: yes{a.targetKind ? ` (${a.targetKind})` : ""}</p>
+      ) : (
+        <p className="pf-error">Target NOT found in export</p>
+      )}
+      {a.targetTypeSha256 && (
+        <p>
+          Type sha256: <code title={a.targetTypeSha256}>{short(a.targetTypeSha256)}</code>
+        </p>
+      )}
+      <p>
+        Axioms in closure: {a.axioms.length > 0 ? a.axioms.join(", ") : "none"}{" "}
+        {a.standardAxiomsOnly ? (
+          <span className="pf-flag pf-flag--ok">standard only</span>
+        ) : (
+          <span className="pf-flag pf-flag--bad" title="Axioms outside propext, Classical.choice, Quot.sound">
+            {ns.length > 0 ? ns.join(", ") : "non-standard"}
+          </span>
+        )}
+      </p>
+      <p>Declarations: {a.declCount}</p>
+    </div>
+  );
 }
 
 function DepChips({ ids, empty }: { ids: readonly string[]; empty: string }) {
@@ -154,6 +199,11 @@ function CheckerRow({
           <td colSpan={5}>
             <p className="pf-note">
               <code>{row.command.join(" ")}</code>
+            </p>
+            <p className="pf-note">
+              Binary sha256{" "}
+              {row.binarySha256 ? <code title={row.binarySha256}>{short(row.binarySha256)}</code> : "not recorded"}
+              {row.ranAt ? `, ran ${new Date(row.ranAt).toLocaleString()}` : ""}.
             </p>
             {row.rejectedDecl && <p className="pf-note">Rejected declaration: <code>{row.rejectedDecl}</code></p>}
             {row.stdoutTail && (
@@ -318,6 +368,7 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
           </tbody>
         </table>
       </div>
+      {result && <ExportAudit result={result} />}
       {result && (
         <p className="pf-note">
           Verified {new Date(result.verifiedAt).toLocaleString()} on Lean {result.leanVersion}.{" "}
@@ -330,6 +381,13 @@ function VerifySection({ node, cone, layering }: { node: Node; cone: Cone | null
               Export <code title={result.exportHash}>{result.exportHash.slice(0, 12)}</code> from <code>{result.module}</code>, {fmtBytes(result.exportBytes)}, {result.exportDecls}{" "}
               declarations, exported in {fmtMs(result.exportDurationMs)}.
             </>
+          )}{" "}
+          {result.binding.oleanSha256 ? (
+            <>
+              Bound to .olean <code title={result.binding.oleanSha256}>{short(result.binding.oleanSha256)}</code> on {result.binding.toolchain ?? "an unknown toolchain"}.
+            </>
+          ) : (
+            "No .olean binding recorded."
           )}{" "}
           Server verdict: {result.verdict}. Rows only speak for the checker that produced them.
         </p>

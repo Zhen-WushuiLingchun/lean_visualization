@@ -12,7 +12,15 @@ import {
   type GraphFile,
   type VerifyResult,
 } from "@proofflow/schema";
-import { ALL_CHECKERS, checkerAvailability, hasLeanexport, isExportBased, runChecker } from "./checkers.js";
+import {
+  ALL_CHECKERS,
+  binarySha256,
+  checkerAvailability,
+  checkerBinaryPath,
+  hasLeanexport,
+  isExportBased,
+  runChecker,
+} from "./checkers.js";
 import {
   declSlug,
   exportDecl,
@@ -24,7 +32,7 @@ import {
   sha256File,
   type ExportInfo,
 } from "./export.js";
-import { locateOlean, resolveToolchain, type ProjectInfo, type Toolchain } from "./project.js";
+import { locateOlean, resolveToolchain, toPosix, type ProjectInfo, type Toolchain } from "./project.js";
 import { defaultRunner, type Runner } from "./runner.js";
 
 export class VerifyError extends Error {
@@ -139,13 +147,20 @@ export function moduleCacheFileOf(project: Pick<ProjectInfo, "stateDir">, module
   return path.join(project.stateDir, "cache", "_modules", declSlug(module), `${oleanHash}.json`);
 }
 
-async function readModuleCache(file: string): Promise<CheckerResult | null> {
+async function readModuleCache(file: string, toolchain: string): Promise<CheckerResult | null> {
   try {
-    const parsed = CheckerResultSchema.safeParse(JSON.parse(await readFile(file, "utf8")));
+    const raw = JSON.parse(await readFile(file, "utf8")) as { toolchain?: unknown; result?: unknown };
+    if (raw.toolchain !== toolchain) return null;
+    const parsed = CheckerResultSchema.safeParse(raw.result);
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
+}
+
+/** Toolchain identity recorded in bindings: Lean version and prefix. */
+export function toolchainIdentity(toolchain: Pick<Toolchain, "leanVersion" | "prefix">): string {
+  return `lean ${toolchain.leanVersion ?? "unknown"} at ${toPosix(toolchain.prefix)}`;
 }
 
 /** Latest result per checker; `next` wins over `prev`. Canonical order. */
@@ -271,6 +286,9 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
   const canExport = hasLeanexport(toolchain);
 
   return withDeclLock(`${project.stateDir}\u0000${decl}`, async () => {
+    // What the export and the cache are bound to: the module's current .olean and the toolchain.
+    const fp = await moduleFingerprint(project, module, toolchain);
+    const binding = { oleanSha256: fp.synthetic ? null : fp.sha256, toolchain: toolchainIdentity(toolchain) };
     // Export only when an export-based checker was asked for and the toolchain can export.
     let exp: ExportInfo | null = null;
     if (exportBased.length > 0 && canExport) {
@@ -282,39 +300,46 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
         runner,
         force: opts.force ?? false,
         log,
+        binding,
         ...(opts.exportTimeoutMs !== undefined ? { timeoutMs: opts.exportTimeoutMs } : {}),
         ...(opts.graphMtimeMs !== undefined ? { graphMtimeMs: opts.graphMtimeMs } : {}),
       });
     } else if (exportBased.length > 0) {
       log(`no leanexport in this toolchain (bundled from Lean 4.35): ${exportBased.join(", ")} unavailable`);
     }
-    const fp = wantsModule || !exp ? await moduleFingerprint(project, module, toolchain) : null;
-    if (!exp && fp) {
+    if (!exp) {
       log(
         fp.synthetic
           ? `module replay of ${module}: no .olean found, cache key = hash of module name and Lean version`
           : `module replay of ${module} (.olean ${formatBytes(fp.bytes)}, sha256 ${fp.sha256.slice(0, 12)})`,
       );
     }
-    const key = exp ? exp.sha256 : (fp as ModuleFingerprint).sha256;
-    const moduleCache = fp ? moduleCacheFileOf(project, module, fp.sha256) : null;
+    const key = exp ? exp.sha256 : fp.sha256;
+    const moduleCache = wantsModule ? moduleCacheFileOf(project, module, fp.sha256) : null;
 
     const cacheFile = cacheFileOf(project, decl, key);
     const cached = await readCacheFile(cacheFile, decl);
+    // A cached result counts only for the same toolchain and the same checker binary.
+    const sameToolchain = cached?.binding.toolchain === binding.toolchain;
     const reused: CheckerResult[] = [];
     const toRun: CheckerName[] = [];
     for (const c of requested) {
-      let hit = opts.force ? undefined : cached?.checkers.find((r) => r.checker === c);
+      let hit = opts.force || !sameToolchain ? undefined : cached?.checkers.find((r) => r.checker === c);
       let from = "cached";
       if (!hit && !opts.force && !isExportBased(c) && moduleCache) {
         // Module replay checks every declaration of the module: share it across declarations.
-        hit = (await readModuleCache(moduleCache)) ?? undefined;
+        hit = (await readModuleCache(moduleCache, binding.toolchain)) ?? undefined;
         from = "cached for module";
       }
-      if (hit && hit.checker === c && REUSABLE_STATUSES.includes(hit.status)) {
+      const currentBinary = await binarySha256(checkerBinaryPath(toolchain.binDir, c));
+      const sameBinary = hit !== undefined && currentBinary !== null && hit.binarySha256 === currentBinary;
+      if (hit && hit.checker === c && sameBinary && REUSABLE_STATUSES.includes(hit.status)) {
         log(`${c}: ${from} ${hit.status}`);
         reused.push(hit);
-      } else toRun.push(c);
+      } else {
+        if (hit && !sameBinary) log(`${c}: cached result came from a different binary, running again`);
+        toRun.push(c);
+      }
     }
 
     const ran = await mapLimit(toRun, opts.concurrency ?? 2, (c) =>
@@ -332,7 +357,9 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
       }),
     );
     const moduleRun = ran.find((r) => !isExportBased(r.checker));
-    if (moduleRun && moduleCache) await writeJsonAtomic(moduleCache, CheckerResultSchema.parse(moduleRun));
+    if (moduleRun && moduleCache) {
+      await writeJsonAtomic(moduleCache, { toolchain: binding.toolchain, result: CheckerResultSchema.parse(moduleRun) });
+    }
 
     const verifiedAt = ran.length === 0 && cached ? cached.verifiedAt : new Date().toISOString();
     const leanVersion = exp?.leanVersion ?? toolchain.leanVersion ?? "unknown";
@@ -346,9 +373,11 @@ export async function verifyDecl(opts: VerifyOptions): Promise<VerifyResult> {
       exportDurationMs: exp ? exp.durationMs : 0,
       verifiedAt,
       leanVersion,
+      binding,
+      exportAudit: exp ? exp.audit : null,
     };
-    if (ran.length > 0 || !cached) {
-      const all = mergeCheckerResults(cached?.checkers ?? [], ran);
+    if (ran.length > 0 || !cached || !sameToolchain) {
+      const all = mergeCheckerResults(sameToolchain ? (cached?.checkers ?? []) : [], ran);
       const stored: VerifyResult = { ...base, checkers: all, verdict: verdictOf(all) };
       await writeJsonAtomic(cacheFile, VerifyResultSchema.parse(stored));
     }

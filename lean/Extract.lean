@@ -209,14 +209,26 @@ inductive AxClass where
   | standard | sorry | nativeDecide | custom
   deriving BEq, Inhabited
 
-def classifyAxiom (s : String) : AxClass :=
+/-- `ax_<digits>_<digits>`. -/
+def isMintedAxSuffix (s : String) : Bool :=
+  match s.splitOn "_" with
+  | ["ax", i, j] => !i.isEmpty && i.all Char.isDigit && !j.isEmpty && j.all Char.isDigit
+  | _ => false
+
+/-- The axiom Lean ≥ 4.35 mints for each `native_decide` use: `<decl>._native.native_decide.ax_<i>_<j>`
+with a non-empty `<decl>`. Same rule as the schema's regex `\._native\.native_decide\.ax_\d+_\d+$`,
+checked on name components rather than on the printed string. -/
+def isMintedNativeDecideAxiom : Name → Bool
+  | .str (.str (.str p "_native") "native_decide") s => !p.isAnonymous && isMintedAxSuffix s
+  | _ => false
+
+def classifyAxiom (n : Name) (s : String) : AxClass :=
   if s == "propext" || s == "Classical.choice" || s == "Quot.sound" then .standard
   else if s == "sorryAx" then .sorry
   -- `Lean.trustCompiler` is the axiom `ofReduceBool`/`ofReduceNat` rest on in Lean ≤ 4.34.
   else if s == "Lean.ofReduceBool" || s == "Lean.ofReduceNat" || s == "Lean.trustCompiler" then
     .nativeDecide
-  -- Lean ≥ 4.35 mints `<decl>._native.native_decide.ax_<i>_<j>` per `native_decide` use.
-  else if (s.splitOn "._native.").length > 1 then .nativeDecide
+  else if isMintedNativeDecideAxiom n then .nativeDecide
   else .custom
 
 /-- Flag-taint bits, in `TAINT_SEVERITY` order. -/
@@ -838,7 +850,7 @@ def run (cfg : Config) : IO UInt32 := do
   let flagProf := prof.flags
   let axProf : Array (Array Nat) := kernel.ax.map (kernel.sets.sets[·]!)
   let axClass := (g.names.zip isAxiom).mapIdx fun i (_, isAx) =>
-    if isAx then classifyAxiom strs[i]! else AxClass.standard
+    if isAx then classifyAxiom g.names[i]! strs[i]! else AxClass.standard
   let t3 ← IO.monoMsNow
   let nEdges := g.ksucc.foldl (· + ·.size) 0
   let nImpl := g.impl.foldl (· + ·.size) 0
@@ -882,7 +894,10 @@ def run (cfg : Config) : IO UInt32 := do
   for i in [0:size] do
     if emit[i]! then emittedRaw := emittedRaw.push i
   let emitted := sortByStr strs emittedRaw
-  let isAux := g.names.mapIdx fun i n => emit[i]! && isAuxName env n
+  -- An axiom is never hidden as aux unless it is the axiom `native_decide` mints: a custom axiom
+  -- with an internal-looking name (`Foo._native.bar`, `_oracle`) stays visible.
+  let isAux := g.names.mapIdx fun i n =>
+    emit[i]! && (if isAxiom[i]! then isMintedNativeDecideAxiom n else isAuxName env n)
 
   -- Stats.
   let mut hasLocalDependent : Array Bool := Array.replicate size false

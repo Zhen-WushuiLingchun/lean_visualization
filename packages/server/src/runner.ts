@@ -10,7 +10,7 @@ export type StreamName = "stdout" | "stderr";
 export interface RunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  /** Hard limit. The process tree is killed when it is exceeded. */
+  /** Hard limit. The process tree is killed when it is exceeded. 0 (or Infinity) = no limit. */
   timeoutMs: number;
   /** Always closed: several Lean tools block on an open stdin. */
   stdin?: "ignore";

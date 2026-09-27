@@ -74,6 +74,8 @@ export function row(checker: CheckerName, status: CheckerStatus, extra: Partial<
     exitCode: status === "accepted" ? 0 : status === "rejected" ? 1 : status === "declined" ? 2 : null,
     durationMs: 120,
     command: [checker],
+    binarySha256: null,
+    ranAt: null,
     stdoutTail: "",
     stderrTail: "",
     rejectedDecl: null,
@@ -91,8 +93,22 @@ export function result(checkers: CheckerResult[], extra: Partial<VerifyResult> =
     exportDurationMs: 900,
     verifiedAt: "2026-09-27T10:00:00.000Z",
     leanVersion: "4.35.0-rc3",
+    binding: { oleanSha256: null, toolchain: null },
+    exportAudit: null,
     checkers,
     verdict: "accepted",
+    ...extra,
+  };
+}
+
+export function audit(extra: Partial<NonNullable<VerifyResult["exportAudit"]>> = {}): NonNullable<VerifyResult["exportAudit"]> {
+  return {
+    targetFound: true,
+    targetKind: "thm",
+    targetTypeSha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    axioms: ["Classical.choice", "Quot.sound", "propext"],
+    standardAxiomsOnly: true,
+    declCount: 183,
     ...extra,
   };
 }

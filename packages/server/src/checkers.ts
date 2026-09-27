@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync, type Stats } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   type CheckerResult,
   type CheckerStatus,
 } from "@proofflow/schema";
+import { sha256File } from "./export.js";
 import { exeName, type Toolchain } from "./project.js";
 import { defaultRunner, type Runner, type RunResult } from "./runner.js";
 
@@ -47,6 +48,9 @@ export interface CheckerSpec {
 
 /** Kernel type-mismatch text, as printed by leanchecker and lean4lean. */
 export const MISMATCH_TEXT = /declaration type mismatch|but it is expected to have type/;
+
+/** nanoda panic text that means a typechecking failure (verified: `assertion failed: self.def_eq(u, v)`). */
+export const NANODA_TYPE_FAILURE = /assertion failed|def_eq|type mismatch|infer/;
 
 /** leanchecker failures that are not verdicts (verified: a module without .olean exits 1). */
 const NOT_A_VERDICT = /Could not find any oleans|object file .* does not exist|unknown module prefix/i;
@@ -125,9 +129,14 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
     argv: (a) => [a.nanodaConfig],
     success: null,
     classifyNonZero: (code, output) => {
-      // Rust panic. An unpermitted axiom is a refusal to judge, anything else is a rejection.
-      if (code === 101) return /declaration not found in infer_const/.test(output) ? "declined" : "rejected";
-      // exit 1 is a config or I/O error (e.g. `failed to open configuration file`), not a verdict.
+      if (code !== 101) {
+        // exit 1 is a config or I/O error (e.g. `failed to open configuration file`), not a verdict.
+        return "error";
+      }
+      // Rust panic. Unpermitted axiom: a refusal to judge. A known typechecking failure: rejection.
+      // Any other panic is a checker crash, not a counterexample (the stderr is kept).
+      if (/declaration not found in infer_const/.test(output)) return "declined";
+      if (NANODA_TYPE_FAILURE.test(output)) return "rejected";
       return "error";
     },
     abortOnPanic: true,
@@ -171,6 +180,26 @@ export function hasLeanexport(toolchain: Pick<Toolchain, "binDir">): boolean {
 
 export function isExportBased(checker: CheckerName): boolean {
   return CHECKER_SPECS[checker].input === "export";
+}
+
+const binaryHashes = new Map<string, { size: number; mtimeMs: number; sha256: string }>();
+
+/**
+ * sha256 of a checker binary, computed once per (path, size, mtime). Part of a checker result's
+ * cache identity: a replaced binary never inherits the old binary's verdicts. Null when missing.
+ */
+export async function binarySha256(file: string): Promise<string | null> {
+  let st: Stats;
+  try {
+    st = statSync(file);
+  } catch {
+    return null;
+  }
+  const hit = binaryHashes.get(file);
+  if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.sha256;
+  const { sha256 } = await sha256File(file);
+  binaryHashes.set(file, { size: st.size, mtimeMs: st.mtimeMs, sha256 });
+  return sha256;
 }
 
 export interface Availability {
@@ -287,6 +316,8 @@ function unavailableResult(checker: CheckerName, command: string[]): CheckerResu
     exitCode: null,
     durationMs: 0,
     command,
+    binarySha256: null,
+    ranAt: null,
     stdoutTail: "",
     stderrTail: "",
     rejectedDecl: null,
@@ -330,6 +361,8 @@ export async function runChecker(checker: CheckerName, ctx: CheckerContext): Pro
     env = checkerEnvFor(checker, ctx.toolchain.checkerEnv);
   }
 
+  // Identity of the binary that judges: the checker itself (module replay: `leanchecker`).
+  const binarySha = await binarySha256(bin);
   const seen: SeenInOutput = { success: false, panic: false, mismatch: false };
   const scan = (text: string): void => {
     if (spec.success?.test(text)) seen.success = true;
@@ -360,6 +393,8 @@ export async function runChecker(checker: CheckerName, ctx: CheckerContext): Pro
     exitCode: r.exitCode,
     durationMs: r.durationMs,
     command: [cmd, ...args],
+    binarySha256: binarySha,
+    ranAt: new Date().toISOString(),
     stdoutTail: r.stdout,
     stderrTail: r.stderr,
     rejectedDecl,

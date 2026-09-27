@@ -88,6 +88,17 @@ const cases: Case[] = [
   { checker: "nanoda", reply: { exitCode: 0 }, status: "accepted" },
   { checker: "nanoda", reply: { exitCode: 101, stderr: NANODA_ASSERT }, status: "rejected", rejectedDecl: null },
   { checker: "nanoda", reply: { exitCode: 101, stderr: NANODA_AXIOM }, status: "declined", rejectedDecl: null },
+  // Negative control: a Rust panic without typechecking text is a crash, not a counterexample.
+  {
+    checker: "nanoda",
+    reply: {
+      exitCode: 101,
+      stderr: "thread 'main' panicked at src/util.rs:88:14:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1`\n",
+    },
+    status: "error",
+    rejectedDecl: null,
+  },
+  { checker: "nanoda", reply: { exitCode: 101, stderr: "thread 'thread_2' panicked: type mismatch in app\n" }, status: "rejected" },
   { checker: "nanoda", reply: { exitCode: 1, stderr: "Error: failed to open configuration file" }, status: "error" },
   { checker: "nanoda", reply: { exitCode: 2 }, status: "error" },
   // con-leche
@@ -195,6 +206,16 @@ describe("argv, environment and stdin", () => {
   it("nanodaConfig always includes the standard three, deduplicated", () => {
     const c = nanodaConfig("x.ndjson", ["propext", "propext"]);
     expect(c["permitted_axioms"]).toEqual(["Classical.choice", "Quot.sound", "propext"]);
+  });
+});
+
+describe("nanoda crash keeps its stderr", () => {
+  it("an unknown panic is `error` with the panic text preserved", async () => {
+    const stderr = "thread 'main' panicked at src/util.rs:88:14:\ncalled `Option::unwrap()` on a `None` value\n";
+    const { r } = await statusOf("nanoda", { exitCode: 101, stderr });
+    expect(r.status).toBe("error");
+    expect(r.stderrTail).toContain("Option::unwrap()");
+    expect(r.binarySha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

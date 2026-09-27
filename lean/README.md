@@ -167,9 +167,12 @@ in `packages/schema/src/graph.ts` does:
 
 - standard: `propext`, `Classical.choice`, `Quot.sound`;
 - `sorryAx`;
-- native decide: `Lean.ofReduceBool`, `Lean.ofReduceNat`, `Lean.trustCompiler` (the axiom those
-  two rest on in Lean ≤ 4.34), or any name containing `._native.` (Lean 4.35 mints
-  `<decl>._native.native_decide.ax_<i>_<j>`);
+- native decide: exactly `Lean.ofReduceBool`, `Lean.ofReduceNat`, `Lean.trustCompiler` (the
+  axiom those two rest on in Lean ≤ 4.34), or the axiom Lean 4.35 mints per `native_decide` use,
+  `<decl>._native.native_decide.ax_<i>_<j>`. The minted form must match exactly: a non-empty
+  `<decl>`, then the components `_native`, `native_decide` and `ax_<digits>_<digits>`, in that order
+  and at the end of the name. This is the schema's regex `\._native\.native_decide\.ax_\d+_\d+$`,
+  checked on name components. `Foo._native.bar` or `Foo._native.native_decide.ax_1` is custom;
 - everything else is custom.
 
 The flag taints `implementedBy`, `extern`, `partial` and `unsafe` start at declarations whose
@@ -193,6 +196,10 @@ an `omega` proof. It also reduces the local, non-aux nodes with no taint at all 
 packages such as Mathlib and Batteries are not exempt.
 
 ### `isAux`
+
+An axiom is aux only when it is the minted `native_decide` axiom above. Every other axiom is
+never aux, whatever its name. A custom axiom called `Foo._native.bar` or `_oracle` is therefore
+never hidden by the viewer's "hide aux" default. The rules below apply to all other declarations.
 
 A name is aux when its user name (private prefix removed) has a component starting with `_`
 (`_unsafe_rec`, `_private`, `_hyg`, `_native`, `_sizeOf_<n>`, `_proof_<n>`, `_flat_ctor`,

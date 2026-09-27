@@ -157,20 +157,50 @@ describe("exportDecl", () => {
     expect(runner.calls).toHaveLength(0);
   });
 
-  it("reuses an existing export unless forced or older than graph.json", async () => {
+  it("reuses an export only when it is bound to the same .olean and toolchain", async () => {
     const project = fakeProject(dir);
     const toolchain = fakeToolchain(dir);
     const runner = new FakeRunner(() => ({ exitCode: 0, stdout: fakeExport("Toy.main") }));
-    const first = await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner });
-    const second = await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner });
+    const binding = { oleanSha256: "a".repeat(64), toolchain: "lean 4.35.0-rc3 at /tc" };
+    const run = (extra: Partial<Parameters<typeof exportDecl>[0]> = {}) =>
+      exportDecl({ project, graph, decl: "Toy.main", toolchain, runner, binding, ...extra });
+    const first = await run();
+    expect(first.binding).toEqual(binding);
+    const second = await run();
     expect(runner.calls).toHaveLength(1);
     expect(second.reused).toBe(true);
     expect(second.sha256).toBe(first.sha256);
-    await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner, force: true });
+    expect(second.audit.targetFound).toBe(true);
+    await run({ force: true });
     expect(runner.calls).toHaveLength(2);
+    // Rebuilt .olean (graph mtime unchanged): fresh export.
+    await run({ binding: { ...binding, oleanSha256: "b".repeat(64) } });
+    expect(runner.calls).toHaveLength(3);
+    // Different toolchain: fresh export.
+    await run({ binding: { oleanSha256: "b".repeat(64), toolchain: "lean 4.36.0 at /tc2" } });
+    expect(runner.calls).toHaveLength(4);
+    // Unknown .olean (null) or no binding at all: never reused.
+    await run({ binding: { oleanSha256: null, toolchain: "lean 4.36.0 at /tc2" } });
+    await run({ binding: { oleanSha256: null, toolchain: "lean 4.36.0 at /tc2" } });
+    expect(runner.calls).toHaveLength(6);
+    await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner });
+    expect(runner.calls).toHaveLength(7);
+    // Graph mtime stays an extra condition.
+    await run();
     const past = new Date(Date.now() - 60_000);
     utimesSync(first.file, past, past);
-    await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner, graphMtimeMs: Date.now() });
-    expect(runner.calls).toHaveLength(3);
+    await run({ graphMtimeMs: Date.now() });
+    expect(runner.calls).toHaveLength(9);
+  });
+
+  it("refuses an export that does not contain the requested declaration", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const runner = new FakeRunner(() => ({ exitCode: 0, stdout: fakeExport("Toy.main", { omitTarget: true }) }));
+    const err = await exportDecl({ project, graph, decl: "Toy.main", toolchain, runner }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExportError);
+    expect((err as ExportError).code).toBe("target-missing");
+    expect((err as Error).message).toMatch(/target declaration not found in export/);
+    expect(existsSync(exportPaths(project, "Toy.main").file)).toBe(false);
   });
 });

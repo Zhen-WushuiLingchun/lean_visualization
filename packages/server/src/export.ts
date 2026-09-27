@@ -5,6 +5,7 @@ import path from "node:path";
 import { Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { GraphFile, Node } from "@proofflow/schema";
+import { auditExport, type ExportAudit } from "./audit.js";
 import type { ProjectInfo, Toolchain } from "./project.js";
 import { defaultRunner, describeFailure, type Runner } from "./runner.js";
 
@@ -168,7 +169,7 @@ export class ExportError extends Error {
   override name = "ExportError";
   constructor(
     message: string,
-    readonly code: "unknown-decl" | "failed" | "panic" | "timeout" | "empty",
+    readonly code: "unknown-decl" | "failed" | "panic" | "timeout" | "empty" | "target-missing",
     readonly stderrTail = "",
   ) {
     super(message);
@@ -186,6 +187,18 @@ export interface ExportInfo {
   leanVersion: string | null;
   reused: boolean;
   command: string[];
+  /** Project state the export was taken from. */
+  binding: ExportBinding | null;
+  /** Facts parsed from the NDJSON itself, independent of graph.json. */
+  audit: ExportAudit;
+}
+
+/** What an export is bound to: the module's `.olean` at export time and the toolchain identity. */
+export interface ExportBinding {
+  /** sha256 of the node's module `.olean`, or null when it could not be located. */
+  oleanSha256: string | null;
+  /** e.g. `lean 4.35.0-rc3 at c:/Users/.../leanprover--lean4---v4.35.0-rc3`. */
+  toolchain: string;
 }
 
 interface ExportSidecar {
@@ -197,6 +210,8 @@ interface ExportSidecar {
   durationMs: number;
   leanVersion: string | null;
   exportedAt: string;
+  oleanSha256?: string | null;
+  toolchain?: string;
 }
 
 export interface ExportOptions {
@@ -209,8 +224,13 @@ export interface ExportOptions {
   /** Re-export even if a previous export exists. */
   force?: boolean;
   log?: (line: string) => void;
-  /** mtime of graph.json: an export older than the graph is not reused. */
+  /** mtime of graph.json: an export older than the graph is not reused (an extra condition). */
   graphMtimeMs?: number;
+  /**
+   * Current `.olean` hash and toolchain identity. An existing export is reused only when its
+   * sidecar records the same (non-null) `.olean` hash and toolchain; without a binding it is redone.
+   */
+  binding?: ExportBinding;
 }
 
 export function findNode(graph: Pick<GraphFile, "nodes">, decl: string): Node | undefined {
@@ -255,27 +275,38 @@ export async function exportDecl(opts: ExportOptions): Promise<ExportInfo> {
   const command = [opts.toolchain.lake, "env", "leanexport", module, "--", decl];
   await mkdir(paths.dir, { recursive: true });
 
+  const binding = opts.binding ?? null;
   if (!opts.force && existsSync(paths.file)) {
     const side = await readSidecar(paths.info);
     const st = await stat(paths.file);
     const fresh = opts.graphMtimeMs === undefined || st.mtimeMs >= opts.graphMtimeMs;
-    if (side && side.decl === decl && side.module === module && fresh) {
-      const d = await digestFile(paths.file);
-      if (d.sha256 === side.sha256 && d.decls > 0) {
-        log(`export reused (${d.decls} decls, ${formatBytes(d.bytes)})`);
+    // Reuse only an export bound to the current build and toolchain (graph mtime alone is not enough).
+    const bound =
+      binding !== null &&
+      binding.oleanSha256 !== null &&
+      side?.oleanSha256 === binding.oleanSha256 &&
+      side?.toolchain === binding.toolchain;
+    if (side && side.decl === decl && side.module === module && fresh && bound) {
+      const pass = await auditExport(paths.file, decl);
+      if (pass.sha256 === side.sha256 && pass.audit.declCount > 0 && pass.audit.targetFound) {
+        log(`export reused (${pass.audit.declCount} decls, ${formatBytes(pass.bytes)}, bound to .olean ${binding.oleanSha256?.slice(0, 12)})`);
         return {
           decl,
           module,
           file: paths.file,
-          sha256: d.sha256,
-          bytes: d.bytes,
-          decls: d.decls,
+          sha256: pass.sha256,
+          bytes: pass.bytes,
+          decls: pass.audit.declCount,
           durationMs: side.durationMs,
-          leanVersion: d.leanVersion ?? side.leanVersion,
+          leanVersion: pass.leanVersion ?? side.leanVersion,
           reused: true,
           command,
+          binding,
+          audit: pass.audit,
         };
       }
+    } else if (side && !bound) {
+      log("previous export is not bound to the current .olean and toolchain: exporting again");
     }
   }
 
@@ -321,6 +352,12 @@ export async function exportDecl(opts: ExportOptions): Promise<ExportInfo> {
   if (writeError) return fail(`could not write export: ${writeError.message}`, "failed");
   if (stats.stats.decls === 0) return fail("leanexport produced no declarations", "empty");
 
+  // Independent audit of the NDJSON: the requested declaration must be in it.
+  const pass = await auditExport(tmp, decl);
+  if (!pass.audit.targetFound) {
+    return fail(`target declaration not found in export: ${decl} (${pass.audit.declCount} declarations exported)`, "target-missing");
+  }
+
   await rename(tmp, paths.file);
   const sha256 = stats.stats.digest();
   const info: ExportSidecar = {
@@ -332,9 +369,15 @@ export async function exportDecl(opts: ExportOptions): Promise<ExportInfo> {
     durationMs: r.durationMs,
     leanVersion: stats.stats.leanVersion(),
     exportedAt: new Date().toISOString(),
+    oleanSha256: binding?.oleanSha256 ?? null,
+    ...(binding ? { toolchain: binding.toolchain } : {}),
   };
   await writeFile(paths.info, JSON.stringify(info, null, 2) + "\n", "utf8");
   log(`export done (${info.decls} decls, ${formatBytes(info.bytes)}, ${formatMs(r.durationMs)})`);
+  log(
+    `export audit: target ${pass.audit.targetKind}, type sha256 ${pass.audit.targetTypeSha256?.slice(0, 12) ?? "n/a"}, ` +
+      `axioms ${pass.audit.axioms.join(", ") || "none"}`,
+  );
   return {
     decl,
     module,
@@ -346,6 +389,8 @@ export async function exportDecl(opts: ExportOptions): Promise<ExportInfo> {
     leanVersion: info.leanVersion,
     reused: false,
     command,
+    binding,
+    audit: pass.audit,
   };
 }
 

@@ -142,4 +142,18 @@ describe("verdictOf", () => {
   it("is partial when nothing ran", () => {
     expect(verdictOf([base("nanoda", "skipped")])).toBe("partial");
   });
+  it("never reports accepted without an accepted L1 kernel replay", () => {
+    expect(verdictOf([base("nanoda", "accepted"), base("con-leche", "accepted")])).toBe("partial");
+    expect(verdictOf([base("leanchecker-module", "accepted"), base("nanoda", "accepted")])).toBe("accepted");
+    expect(verdictOf([base("leanchecker", "accepted")])).toBe("accepted");
+  });
+});
+
+describe("native_decide axiom recognition is exact", () => {
+  it("accepts only the minted form", () => {
+    expect(classifyAxiom("Foo.bar._native.native_decide.ax_12_3")).toBe("nativeDecide");
+    expect(classifyAxiom("Lean.trustCompiler")).toBe("nativeDecide");
+    expect(classifyAxiom("Evil._native.myAxiom")).toBe("custom");
+    expect(classifyAxiom("Foo._native.native_decide.ax_1")).toBe("custom");
+  });
 });

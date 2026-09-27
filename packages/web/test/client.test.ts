@@ -7,6 +7,7 @@ import {
   fetchResults,
   parseGraphFile,
   parseJobEvent,
+  parseResults,
   parseSourceSnippet,
   parseVerifyStart,
   postVerify,
@@ -98,6 +99,17 @@ describe("results, source and verify", () => {
     const rs = await fetchResults("Demo.«weird name»");
     expect(rs.map((r) => r.verifiedAt)).toEqual([b.verifiedAt, a.verifiedAt]);
     expect(String(f.mock.calls[0]?.[0])).toBe(`/api/results?decl=${encodeURIComponent("Demo.«weird name»")}`);
+  });
+  it("fills binding, export audit and per-checker provenance for results from older servers", () => {
+    const old = { ...result([row("leanchecker", "accepted")]) } as Record<string, unknown>;
+    delete old.binding;
+    delete old.exportAudit;
+    old.checkers = [{ checker: "leanchecker", status: "accepted", exitCode: 0, durationMs: 5, command: ["x"], stdoutTail: "", stderrTail: "", rejectedDecl: null }];
+    const [r] = parseResults([old]);
+    expect(r?.binding).toEqual({ oleanSha256: null, toolchain: null });
+    expect(r?.exportAudit).toBeNull();
+    expect(r?.checkers[0]?.binarySha256).toBeNull();
+    expect(r?.checkers[0]?.ranAt).toBeNull();
   });
   it("parses source snippets", () => {
     expect(parseSourceSnippet({ file: "Demo/Basic.lean", line: 3, endLine: 5, text: "theorem x" })).toEqual({ file: "Demo/Basic.lean", line: 3, endLine: 5, text: "theorem x" });

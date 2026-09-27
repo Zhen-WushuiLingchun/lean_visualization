@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { VerifyResultSchema, type CheckerResult } from "@proofflow/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -12,14 +13,26 @@ import {
   parseCheckerList,
   readCachedResults,
   resolveCheckerSelection,
+  toolchainIdentity,
   verifyDecl,
 } from "../src/verify.js";
-import { FakeRunner, fakeOlean, fakeProject, fakeToolchain, loadToyGraph, pipelineHandler, removeDir, tempDir } from "./helpers.js";
+import { exeName } from "../src/project.js";
+import {
+  FakeRunner,
+  fakeExport,
+  fakeOlean,
+  fakeProject,
+  fakeToolchain,
+  loadToyGraph,
+  pipelineHandler,
+  removeDir,
+  tempDir,
+} from "./helpers.js";
 
 const graph = loadToyGraph();
 
 function result(checker: CheckerResult["checker"], status: CheckerResult["status"], durationMs = 1): CheckerResult {
-  return { checker, status, exitCode: 0, durationMs, command: [checker], stdoutTail: "", stderrTail: "", rejectedDecl: null };
+  return { checker, status, exitCode: 0, durationMs, command: [checker], binarySha256: null, ranAt: null, stdoutTail: "", stderrTail: "", rejectedDecl: null };
 }
 
 describe("checker selection", () => {
@@ -85,6 +98,8 @@ describe("verifyDecl", () => {
   let dir = "";
   beforeEach(() => {
     dir = tempDir();
+    // The modules of the fixture graph are "built": exports get bound to these .oleans.
+    for (const m of ["Toy.Basic", "Toy.Main", "Toy.Axioms"]) fakeOlean(dir, m);
   });
   afterEach(() => removeDir(dir));
 
@@ -259,6 +274,76 @@ describe("verifyDecl", () => {
     const found = await moduleFingerprint(project, "Toy.Nowhere", toolchain);
     expect(found).toMatchObject({ file, bytes: 70_000, synthetic: false });
     expect(found.sha256).toBe(createHash("sha256").update(readFileSync(file)).digest("hex"));
+  });
+
+  it("binds the export to the .olean: a rebuilt .olean with unchanged graph mtime triggers a fresh export", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    const graphMtimeMs = Date.now() - 3_600_000;
+    const exports = () => runner.calls.filter((c) => c.args[1] === "leanexport").length;
+    const first = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner, graphMtimeMs });
+    expect(first.binding.oleanSha256).toBe(createHash("sha256").update("olean of Toy.Basic").digest("hex"));
+    expect(first.binding.toolchain).toBe(toolchainIdentity(toolchain));
+    expect(first.exportAudit).toMatchObject({ targetFound: true, targetKind: "thm", axioms: ["propext"], standardAxiomsOnly: true, declCount: 2 });
+    await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner, graphMtimeMs });
+    expect(exports()).toBe(1);
+    fakeOlean(dir, "Toy.Basic", "rebuilt");
+    const again = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner, graphMtimeMs });
+    expect(exports()).toBe(2);
+    expect(again.binding.oleanSha256).toBe(createHash("sha256").update("rebuilt").digest("hex"));
+  });
+
+  it("re-runs a checker whose binary changed, and records binary sha256 and ranAt", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    const bin = path.join(toolchain.binDir, exeName("leanchecker"));
+    const r1 = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner });
+    const lc = r1.checkers[0];
+    expect(lc?.binarySha256).toBe(createHash("sha256").update(readFileSync(bin)).digest("hex"));
+    expect(Date.parse(lc?.ranAt ?? "")).not.toBeNaN();
+    await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner });
+    expect(runner.callsTo("leanchecker")).toHaveLength(1);
+    writeFileSync(bin, "a patched leanchecker");
+    const r3 = await verifyDecl({ project, graph, decl: "Toy.double_eq", toolchain, runner });
+    expect(runner.callsTo("leanchecker")).toHaveLength(2);
+    expect(r3.checkers[0]?.binarySha256).toBe(createHash("sha256").update("a patched leanchecker").digest("hex"));
+  });
+
+  it("refuses to run checkers when the export does not contain the target", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const runner = new FakeRunner(({ args }) =>
+      args[1] === "leanexport" ? { exitCode: 0, stdout: fakeExport("Toy.main", { omitTarget: true }) } : { exitCode: 0 },
+    );
+    await expect(verifyDecl({ project, graph, decl: "Toy.main", toolchain, runner })).rejects.toThrow(
+      /target declaration not found in export/,
+    );
+    expect(runner.calls).toHaveLength(1);
+  });
+
+  it("reports the exact export axioms, and never accepts without an L1 replay", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const base = pipelineHandler(toolchain);
+    const runner = new FakeRunner((call) =>
+      call.args[1] === "leanexport"
+        ? { exitCode: 0, stdout: fakeExport("Toy.unfinished", { axioms: ["propext", "sorryAx"] }) }
+        : base(call),
+    );
+    const r = await verifyDecl({ project, graph, decl: "Toy.unfinished", toolchain, runner, checkers: ["nanoda", "con-ron"] });
+    expect(r.checkers.every((c) => c.status === "accepted")).toBe(true);
+    expect(r.verdict).toBe("partial");
+    expect(r.exportAudit).toMatchObject({ axioms: ["propext", "sorryAx"], standardAxiomsOnly: false });
+  });
+
+  it("passes a zero timeout through (no wall-clock kill)", async () => {
+    const project = fakeProject(dir);
+    const toolchain = fakeToolchain(dir);
+    const runner = new FakeRunner(pipelineHandler(toolchain));
+    await verifyDecl({ project, graph, decl: "Toy.double", toolchain, runner, exportTimeoutMs: 0, checkerTimeoutMs: 0 });
+    expect(runner.calls.map((c) => c.opts.timeoutMs)).toEqual([0, 0]);
   });
 
   it("refuses unknown declarations", async () => {
