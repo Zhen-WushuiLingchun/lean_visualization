@@ -1,0 +1,32 @@
+{
+  "name": "@proofflow/server",
+  "version": "0.1.0",
+  "description": "ProofFlow CLI and local HTTP API: extraction, per-node verification, caching",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "proofflow": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@proofflow/schema": "workspace:*",
+    "commander": "^15.0.0",
+    "hono": "^4.13.9",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.2"
+  }
+}

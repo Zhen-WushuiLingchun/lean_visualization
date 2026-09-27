@@ -71,10 +71,23 @@ checker's job is typing). Alternatively `"unsafe_permit_all_axioms": true` with 
 `permitted_axioms` and `unpermitted_axiom_hard_error: false` admits every axiom (see test result in the
 "Errors" section).
 
-## Errors and edge cases (fill in from the smoke log)
+## Errors and edge cases (all verified)
 
-- `leanexport Smoke -- doesNotExist`: see below.
+- `leanexport Smoke -- doesNotExist` **exits 0** but prints
+  `PANIC at LeanExport.dumpConstant LeanExport.Basic:254:48: Constant doesNotExist not found in environment.`
+  on stderr and writes a truncated file. The server must (a) refuse to export a declaration that is
+  not in `graph.json`, and (b) treat any `PANIC` in leanexport's stderr as an export failure.
+- `leanchecker --from-export` on an ill-typed export exits 1 and prints
+  `(kernel) declaration type mismatch, 't4' has type ... but it is expected to have type ...`.
+  With `--silent` nothing is printed at all, so do not pass `--silent`.
+- `nanoda_bin`: `"unsafe_permit_all_axioms": true` is rejected whenever a `permitted_axioms` key is
+  present, even empty (`incompatible config options`). Use the explicit permitted list (the node's
+  transitive `axioms`), exactly like Lake does.
 - Export files can be large (Mathlib-scale closures reach hundreds of MB). Stream them to disk; never
-  read them into memory just to hash them; hash with a streaming sha256.
-- Every checker must be run with a timeout (default 600 s) and `stdin` closed (`/dev/null`); some
-  binaries block on an open stdin.
+  read them into memory just to hash them; hash with a streaming sha256. Count declaration records
+  while streaming (lines whose first key is one of `axiom`, `def`, `thm`, `opaque`, `quot`, `inductive`).
+- Every checker must be run with a timeout (default 600 s) and `stdin` closed (`stdio: ["ignore", "pipe", "pipe"]`);
+  some binaries block on an open stdin.
+- Exit-code map used by the server: `0` → accepted; `1` → rejected; `2` → declined (con-leche/con-ron);
+  `101` → nanoda panic (rejected, or declined when stderr mentions `declaration not found in infer_const`);
+  anything else → error. A timeout is `timeout`. A missing binary is `unavailable`.

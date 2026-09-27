@@ -111,9 +111,13 @@ audience needs to see).
 - Never mark a checker as "accepted" on a non-zero exit code. Unknown exit codes are `error`, not `rejected`.
 - Long subprocesses (extraction, checkers) must have timeouts and must stream logs; the UI must never hang.
 - Do not add dependencies casually. Allowed: `zod`, `hono`, `@hono/node-server`, `commander`,
-  `child_process` (built-in), `@xyflow/react`, `elkjs`, `graphology` (+`graphology-dag`), `react`,
-  `react-dom`, `vite`, `@vitejs/plugin-react`, `vitest`, `typescript`, `tsx`. Anything else needs a
-  one-line justification in the commit message.
+  `child_process` (built-in), `@xyflow/react`, `elkjs`, `graphology` (+`graphology-dag`,
+  `graphology-types`), `react`, `react-dom`, `vite`, `@vitejs/plugin-react`, `vitest`, `jsdom`,
+  `@testing-library/react`, `typescript`, `tsx`, `@types/*`. Anything else needs a one-line
+  justification in the commit message. The root `pnpm-lock.yaml` is shared: add a dependency by
+  editing the package's `package.json` and running `pnpm install` from the repo root once.
+- Ports: the server listens on `4870` by default; the Vite dev server on `5173` proxies `/api` to it.
+- Line endings are LF everywhere (`.gitattributes` enforces it).
 - Keep Lean code dependency-free (only `import Lean` plus the audited project's root). It must compile on
   any toolchain ≥ v4.28; if you use an API introduced later, guard it or document the floor bump.
 - Style: no em-dashes in user-facing UI strings; short sentences; English identifiers and comments.
