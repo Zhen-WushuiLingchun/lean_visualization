@@ -18,6 +18,8 @@ export {
   runLeanchecker,
   runLeancheckerModule,
   binarySha256,
+  NANODA_DECLINED,
+  NANODA_TC_LOCATION,
   NANODA_TYPE_FAILURE,
   runLeancheckerParanoid,
   runNanoda,

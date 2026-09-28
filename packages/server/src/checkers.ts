@@ -49,8 +49,26 @@ export interface CheckerSpec {
 /** Kernel type-mismatch text, as printed by leanchecker and lean4lean. */
 export const MISMATCH_TEXT = /declaration type mismatch|but it is expected to have type/;
 
-/** nanoda panic text that means a typechecking failure (verified: `assertion failed: self.def_eq(u, v)`). */
-export const NANODA_TYPE_FAILURE = /assertion failed|def_eq|type mismatch|infer/;
+/**
+ * nanoda panic text that means the checker refused to judge rather than found a fault: an
+ * unpermitted axiom, or a declaration whose `DefinitionSafety` is `unsafe`/`partial`. Verified
+ * 2026-09-28 on the `_unsafe_rec` auxiliaries of a Mathlib-scale project: nanoda panics at
+ * `src/parser.rs:784` with `assertion failed: !matches!(safety, DefinitionSafety::Unsafe |
+ * DefinitionSafety::Partial)`; con-leche/con-ron decline the same declarations with exit 2
+ * (`declined: definition with safety 'partial'`). The kernel never sees such bodies, so this is a
+ * tool limitation (`declined`), not a mathematical rejection.
+ */
+export const NANODA_DECLINED = /declaration not found in infer_const|DefinitionSafety::(?:Unsafe|Partial)/;
+
+/**
+ * nanoda panic text that means a typechecking failure: definitional-equality or inference
+ * failures and explicit type mismatches (verified: `assertion failed: self.def_eq(u, v)` at
+ * `src/tc.rs:955`). A bare `assertion failed` outside the type checker (`tc.rs`) is a crash.
+ */
+export const NANODA_TYPE_FAILURE = /def_eq|type mismatch|\binfer\b/;
+
+/** Panic location inside nanoda's type checker; an assertion there is a typechecking verdict. */
+export const NANODA_TC_LOCATION = /\btc\.rs:\d+/;
 
 /** leanchecker failures that are not verdicts (verified: a module without .olean exits 1). */
 const NOT_A_VERDICT = /Could not find any oleans|object file .* does not exist|unknown module prefix/i;
@@ -133,10 +151,12 @@ export const CHECKER_SPECS: Readonly<Record<CheckerName, CheckerSpec>> = {
         // exit 1 is a config or I/O error (e.g. `failed to open configuration file`), not a verdict.
         return "error";
       }
-      // Rust panic. Unpermitted axiom: a refusal to judge. A known typechecking failure: rejection.
-      // Any other panic is a checker crash, not a counterexample (the stderr is kept).
-      if (/declaration not found in infer_const/.test(output)) return "declined";
+      // Rust panic. Unpermitted axiom or an unsafe/partial declaration: a refusal to judge. A known
+      // typechecking failure, or any assertion inside the type checker: rejection. Any other panic is
+      // a checker crash, not a counterexample (the stderr is kept).
+      if (NANODA_DECLINED.test(output)) return "declined";
       if (NANODA_TYPE_FAILURE.test(output)) return "rejected";
+      if (/assertion failed/.test(output) && NANODA_TC_LOCATION.test(output)) return "rejected";
       return "error";
     },
     abortOnPanic: true,

@@ -52,6 +52,13 @@ const T4_LEANCHECKER =
 const NANODA_ASSERT =
   "thread 'thread_1' panicked at src/tc.rs:955:71:\nassertion failed: self.def_eq(u, v)\nnote: run with `RUST_BACKTRACE=1`\n";
 const NANODA_AXIOM = "thread 'thread_0' panicked at src/tc.rs:230:13:\ndeclaration not found in infer_const, myAx\n";
+// Verified 2026-09-28 (Windows path separator as printed): the parser refuses unsafe/partial definitions.
+const NANODA_SAFETY =
+  "thread 'main' (66072) panicked at src\\parser.rs:784:17:\nassertion failed: !matches!(safety, DefinitionSafety::Unsafe | DefinitionSafety::Partial)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n";
+// An assertion inside the type checker that is not the def_eq one is still a typechecking verdict.
+const NANODA_TC_OTHER = "thread 'thread_2' panicked at src/tc.rs:1210:9:\nassertion failed: self.is_sort(t)\n";
+// An assertion outside the type checker with no typechecking text is a crash.
+const NANODA_PARSER_OTHER = "thread 'main' panicked at src/parser.rs:311:5:\nassertion failed: idx < self.names.len()\n";
 
 const cases: Case[] = [
   // leanchecker (L1)
@@ -99,6 +106,12 @@ const cases: Case[] = [
     rejectedDecl: null,
   },
   { checker: "nanoda", reply: { exitCode: 101, stderr: "thread 'thread_2' panicked: type mismatch in app\n" }, status: "rejected" },
+  // Tool limitation, not a counterexample: unsafe/partial declarations (e.g. `_unsafe_rec` auxiliaries).
+  { checker: "nanoda", reply: { exitCode: 101, stderr: NANODA_SAFETY }, status: "declined", rejectedDecl: null },
+  { checker: "nanoda", reply: { exitCode: 101, stderr: NANODA_TC_OTHER }, status: "rejected", rejectedDecl: null },
+  { checker: "nanoda", reply: { exitCode: 101, stderr: NANODA_PARSER_OTHER }, status: "error", rejectedDecl: null },
+  // `infer_const` belongs to the declined pattern; a plain inference failure is a verdict.
+  { checker: "nanoda", reply: { exitCode: 101, stderr: "thread 'thread_1' panicked at src/tc.rs:88:9:\nfailed to infer type of application\n" }, status: "rejected" },
   { checker: "nanoda", reply: { exitCode: 1, stderr: "Error: failed to open configuration file" }, status: "error" },
   { checker: "nanoda", reply: { exitCode: 2 }, status: "error" },
   // con-leche
